@@ -8,7 +8,7 @@ repository = "https://github.com/yourusername/vapor-cli"
 readme = "README.md"
 keywords = ["sqlite", "database", "cli", "repl", "sql"]
 categories = ["command-line-utilities", "database", "development-tools"]
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Ola Yeku <ooyeku@gmail.com>"]
 
 [dependencies]
 anyhow = "1.0"
