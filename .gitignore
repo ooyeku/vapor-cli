@@ -1,5 +1,12 @@
 /target
+**/*.rs.bk
+Cargo.lock
 *.csv
 *.db
 .vapor_history
-.idea
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+.DS_Store

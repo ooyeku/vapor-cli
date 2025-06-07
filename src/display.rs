@@ -169,7 +169,13 @@ pub fn execute_sql(conn: &Connection, sql: &str, options: &QueryOptions) -> Resu
         while let Some(row) = rows.next()? {
             let mut row_values = Vec::new();
             for i in 0..column_names.len() {
-                let value: String = row.get(i)?;
+                let value = match row.get_ref(i)? {
+                    rusqlite::types::ValueRef::Null => "NULL".to_string(),
+                    rusqlite::types::ValueRef::Integer(val) => val.to_string(),
+                    rusqlite::types::ValueRef::Real(val) => val.to_string(),
+                    rusqlite::types::ValueRef::Text(val) => String::from_utf8_lossy(val).to_string(),
+                    rusqlite::types::ValueRef::Blob(val) => format!("<binary data: {} bytes>", val.len()),
+                };
                 row_values.push(value);
             }
             all_rows.push(row_values);

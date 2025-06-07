@@ -364,7 +364,7 @@ fn handle_special_commands(
     }
 
     if command.eq_ignore_ascii_case("tables") {
-        list_tables(db_path)?;
+        let _ = list_tables(db_path)?;
         return Ok(());
     }
 
@@ -516,7 +516,7 @@ fn handle_single_line_command(
 ) -> Result<()> {
     match line.trim() {
         ".help" => print_help_summary(),
-        ".tables" => list_tables(db_path)?,
+        ".tables" => { let _ = list_tables(db_path)?; },
         ".schema" => {
             if line.contains(' ') {
                 let table_name = line.split_whitespace().nth(1).unwrap();

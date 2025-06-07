@@ -121,7 +121,7 @@ pub fn create_table(db_path: &str, table_name: &str, columns: &str) -> Result<()
 }
 
 /// List all tables in the connected database with enhanced error handling
-pub fn list_tables(db_path: &str) -> Result<()> {
+pub fn list_tables(db_path: &str) -> Result<Vec<String>> {
     // Validate database exists and is accessible
     if !Path::new(db_path).exists() {
         anyhow::bail!(
@@ -147,11 +147,13 @@ pub fn list_tables(db_path: &str) -> Result<()> {
 
     let mut has_tables = false;
     let mut table_count = 0;
+    let mut tables = Vec::new();
     
     for table_name_result in table_names {
         let name = table_name_result
             .with_context(|| "Failed to read table name from database result")?;
-        table.add_row(row![name]);
+        table.add_row(row![&name]);
+        tables.push(name);
         has_tables = true;
         table_count += 1;
     }
@@ -166,7 +168,7 @@ pub fn list_tables(db_path: &str) -> Result<()> {
     }
 
     // Connection will be automatically dropped when it goes out of scope
-    Ok(())
+    Ok(tables)
 }
 
 /// Create a database connection with retry logic for handling temporary issues
