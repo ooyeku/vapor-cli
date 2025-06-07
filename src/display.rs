@@ -1,143 +1,215 @@
 use anyhow::{Context, Result};
 use prettytable::{row, Table};
 use rusqlite::{Connection, params};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::error::Error;
+use std::fmt;
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub enum OutputFormat {
     Table,
     Json,
     Csv,
 }
 
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum DisplayError {
+    DatabaseError(String),
+    QueryError(String),
+}
+
+impl fmt::Display for DisplayError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DisplayError::QueryError(msg) => write!(f, "Query error: {}", msg),
+            DisplayError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
+        }
+    }
+}
+
+impl Error for DisplayError {}
+
 pub struct QueryOptions {
     pub format: OutputFormat,
-    pub limit: Option<usize>,
-    pub timing: bool,
+    pub max_rows: Option<usize>,
+    pub show_timing: bool,
 }
 
 impl Default for QueryOptions {
     fn default() -> Self {
         Self {
             format: OutputFormat::Table,
-            limit: Some(1000), // Default limit to prevent overwhelming output
-            timing: true,
+            max_rows: Some(1000),
+            show_timing: true,
         }
+    }
+}
+
+#[allow(dead_code)]
+pub struct QueryCache {
+    results: HashMap<String, (Vec<Vec<String>>, Instant)>,
+    max_size: usize,
+    ttl: Duration,
+}
+
+#[allow(dead_code)]
+impl QueryCache {
+    pub fn new(max_size: usize, ttl: Duration) -> Self {
+        Self {
+            results: HashMap::new(),
+            max_size,
+            ttl,
+        }
+    }
+
+    pub fn get(&self, query: &str) -> Option<&Vec<Vec<String>>> {
+        if let Some((results, timestamp)) = self.results.get(query) {
+            if timestamp.elapsed() < self.ttl {
+                return Some(results);
+            }
+        }
+        None
+    }
+
+    pub fn insert(&mut self, query: String, results: Vec<Vec<String>>) {
+        // Remove oldest entries if cache is full
+        if self.results.len() >= self.max_size {
+            let oldest_key = self.results.iter()
+                .min_by_key(|(_, (_, time))| time)
+                .map(|(key, _)| key.clone());
+            
+            if let Some(key) = oldest_key {
+                self.results.remove(&key);
+            }
+        }
+        
+        self.results.insert(query, (results, Instant::now()));
+    }
+
+    pub fn clear(&mut self) {
+        self.results.clear();
+    }
+}
+
+#[allow(dead_code)]
+pub struct ProgressiveLoader {
+    batch_size: usize,
+    total_rows: usize,
+    loaded_rows: usize,
+    column_names: Vec<String>,
+    current_batch: Vec<Vec<String>>,
+}
+
+#[allow(dead_code)]
+impl ProgressiveLoader {
+    pub fn new(batch_size: usize, column_names: Vec<String>) -> Self {
+        Self {
+            batch_size,
+            total_rows: 0,
+            loaded_rows: 0,
+            column_names,
+            current_batch: Vec::new(),
+        }
+    }
+
+    pub fn add_row(&mut self, row: Vec<String>) {
+        self.current_batch.push(row);
+        self.loaded_rows += 1;
+        
+        if self.current_batch.len() >= self.batch_size {
+            self.flush_batch();
+        }
+    }
+
+    pub fn flush_batch(&mut self) {
+        if !self.current_batch.is_empty() {
+            display_as_table(&self.column_names, &self.current_batch);
+            println!("Loaded {}/{} rows...", self.loaded_rows, self.total_rows);
+            self.current_batch.clear();
+        }
+    }
+
+    pub fn set_total_rows(&mut self, total: usize) {
+        self.total_rows = total;
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.loaded_rows >= self.total_rows
     }
 }
 
 /// Execute a SQL command and display the results with enhanced formatting and timing
-pub fn execute_sql_enhanced(
-    conn: &Connection,
-    sql: &str,
-    last_select_query: Option<Arc<Mutex<String>>>,
-    options: &QueryOptions,
-) -> Result<()> {
+pub fn execute_sql(conn: &Connection, sql: &str, options: &QueryOptions) -> Result<()> {
     let start_time = Instant::now();
     
-    // Check if the command is a SELECT query
-    let sql_lower = sql.to_lowercase();
-    let is_select = sql_lower.starts_with("select");
-
-    if is_select {
-        if let Some(last_query) = last_select_query {
-            *last_query.lock().unwrap() = sql.to_string();
-        }
-        
-        execute_select_query(conn, sql, options, start_time)?;
-    } else {
-        // For non-SELECT queries, just execute and show affected rows
-        let affected = conn.execute(sql, params![])
-            .context(format!("Failed to execute statement: {}", sql))?;
-
-        let duration = start_time.elapsed();
-        println!("{} row(s) affected", affected);
-        
-        if options.timing {
-            println!("Query executed in {:.3}ms", duration.as_secs_f64() * 1000.0);
-        }
-    }
-
-    Ok(())
-}
-
-fn execute_select_query(
-    conn: &Connection,
-    sql: &str,
-    options: &QueryOptions,
-    start_time: Instant,
-) -> Result<()> {
+    // Execute the query
     let mut stmt = conn.prepare(sql)
-        .context(format!("Failed to prepare statement: {}", sql))?;
-
-    let column_names: Vec<String> = stmt.column_names()
-        .iter()
-        .map(|&name| name.to_string())
-        .collect();
-
-    if column_names.is_empty() {
-        println!("Query returned no columns.");
-        return Ok(());
-    }
-
-    let mut rows = stmt.query_map(params![], |row| {
-        let mut values = Vec::new();
-        for i in 0..column_names.len() {
-            let value = row.get_ref_unwrap(i);
-            let value_str = match value {
-                rusqlite::types::ValueRef::Null => "NULL".to_string(),
-                rusqlite::types::ValueRef::Integer(i) => i.to_string(),
-                rusqlite::types::ValueRef::Real(f) => f.to_string(),
-                rusqlite::types::ValueRef::Text(t) => String::from_utf8_lossy(t).to_string(),
-                rusqlite::types::ValueRef::Blob(_) => "[BLOB]".to_string(),
-            };
-            values.push(value_str);
-        }
-        Ok(values)
-    }).context("Failed to execute query")?;
-
-    let mut all_rows = Vec::new();
-    let mut row_count = 0;
+        .context("Failed to prepare SQL statement")?;
     
-    for row_result in &mut rows {
-        let row_values = row_result.context("Failed to read row")?;
-        all_rows.push(row_values);
-        row_count += 1;
+    // Check if it's a SELECT query
+    let is_select = sql.trim().to_uppercase().starts_with("SELECT");
+    
+    if is_select {
+        // Get column names before executing the query
+        let column_names: Vec<String> = stmt.column_names()
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
         
-        // Check if we've hit the limit
-        if let Some(limit) = options.limit {
-            if row_count >= limit {
-                break;
+        let mut rows = stmt.query([])
+            .context("Failed to execute SELECT query")?;
+        
+        // Collect all rows
+        let mut all_rows = Vec::new();
+        let mut row_count = 0;
+        
+        while let Some(row) = rows.next()? {
+            let mut row_values = Vec::new();
+            for i in 0..column_names.len() {
+                let value: String = row.get(i)?;
+                row_values.push(value);
+            }
+            all_rows.push(row_values);
+            row_count += 1;
+            
+            if let Some(limit) = options.max_rows {
+                if row_count >= limit {
+                    break;
+                }
             }
         }
-    }
-
-    let duration = start_time.elapsed();
-
-    if row_count > 0 {
-        match options.format {
-            OutputFormat::Table => display_as_table(&column_names, &all_rows),
-            OutputFormat::Json => display_as_json(&column_names, &all_rows)?,
-            OutputFormat::Csv => display_as_csv(&column_names, &all_rows),
+        
+        // Display results based on format
+        if !all_rows.is_empty() {
+            match options.format {
+                OutputFormat::Table => display_as_table(&column_names, &all_rows),
+                OutputFormat::Json => display_as_json(&column_names, &all_rows)?,
+                OutputFormat::Csv => display_as_csv(&column_names, &all_rows),
+            }
         }
         
         println!("{} row(s) returned", row_count);
         
-        if let Some(limit) = options.limit {
+        if let Some(limit) = options.max_rows {
             if row_count >= limit {
                 println!("(Limited to {} rows. Use '.limit 0' to show all rows)", limit);
             }
         }
     } else {
-        println!("Query returned no rows.");
+        // For non-SELECT queries
+        let affected = stmt.execute([])
+            .context("Failed to execute non-SELECT query")?;
+        
+        println!("{} row(s) affected", affected);
     }
     
-    if options.timing {
-        println!("Query executed in {:.3}ms", duration.as_secs_f64() * 1000.0);
+    if options.show_timing {
+        println!("Query executed in {:.3}ms", start_time.elapsed().as_secs_f64() * 1000.0);
     }
-
+    
     Ok(())
 }
 
@@ -211,12 +283,6 @@ fn display_as_csv(column_names: &[String], rows: &[Vec<String>]) {
             .collect();
         println!("{}", escaped_values.join(","));
     }
-}
-
-/// Execute a SQL command and display the results (backwards compatibility)
-pub fn execute_sql(conn: &Connection, sql: &str, last_select_query: Option<Arc<Mutex<String>>>) -> Result<()> {
-    let options = QueryOptions::default();
-    execute_sql_enhanced(conn, sql, last_select_query, &options)
 }
 
 /// Show the schema for a specific table

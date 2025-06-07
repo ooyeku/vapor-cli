@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::bookmarks::BookmarkManager;
 use crate::db::list_tables;
-use crate::display::{execute_sql, execute_sql_enhanced, show_table_schema, show_all_schemas, show_database_info, OutputFormat, QueryOptions};
+use crate::display::{execute_sql, show_table_schema, show_all_schemas, show_database_info, OutputFormat, QueryOptions};
 use crate::export::export_to_csv;
 use crate::transactions::TransactionManager;
 
@@ -51,7 +51,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
     // Load command history if available
     let history_path = Path::new(".vapor_history");
     if history_path.exists() {
-        if let Err(e) = rl.load_history(history_path.to_str().unwrap()) {
+        if let Err(e) = rl.load_history(history_path) {
             eprintln!("Warning: Could not load command history: {}", e);
         }
     }
@@ -97,7 +97,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                          if let Ok(handled) = transaction_manager.handle_sql_command(&conn, &command) {
                              if !handled {
                                  // Regular SQL command
-                                 if let Err(sql_err) = execute_sql_enhanced(&conn, &command, Some(last_select_query.clone()), &query_options) {
+                                 if let Err(sql_err) = execute_sql(&conn, &command, &query_options) {
                                      print_command_error(&command, &sql_err);
                                      
                                      // For critical errors, offer to reconnect
@@ -175,127 +175,62 @@ fn verify_database_file(db_path: &str) -> Result<()> {
 }
 
 fn create_robust_connection(db_path: &str) -> Result<Connection> {
-    let mut last_error_msg = String::new();
+    let mut last_error = None;
+    let max_retries = 3;
     
-    for attempt in 1..=3 {
+    for attempt in 1..=max_retries {
         match Connection::open(db_path) {
             Ok(conn) => {
-                // Test the connection with a simple query instead of execute
-                if conn.prepare("SELECT 1").is_ok() {
-                    if attempt > 1 {
-                        println!("Connection succeeded on attempt {}", attempt);
-                    }
-                    return Ok(conn);
-                } else {
-                    let error_msg = format!("Connection test failed on attempt {}", attempt);
-                    eprintln!("{}", error_msg);
-                    last_error_msg = error_msg;
-                    if attempt < 3 {
-                        std::thread::sleep(std::time::Duration::from_millis(100 * attempt as u64));
-                    }
-                    continue;
+                if attempt > 1 {
+                    println!("Connection succeeded on attempt {}", attempt);
                 }
+                return Ok(conn);
             }
             Err(e) => {
-                let error_msg = format!("Connection attempt {} failed: {}", attempt, e);
-                last_error_msg = error_msg.clone();
-                if attempt < 3 {
-                    eprintln!("{}", error_msg);
-                    eprintln!("   Retrying...");
+                last_error = Some(e);
+                if attempt < max_retries {
+                    println!("Connection attempt {} failed, retrying...", attempt);
                     std::thread::sleep(std::time::Duration::from_millis(100 * attempt as u64));
                 }
             }
         }
     }
     
-    // If we get here, all attempts failed
-    anyhow::bail!("Failed to connect to database '{}' after 3 attempts. Last error: {}", db_path, last_error_msg)
+    Err(last_error.unwrap())
+        .with_context(|| format!(
+            "Failed to connect to database '{}' after {} attempts. Database may be locked or corrupted.",
+            db_path, max_retries
+        ))
 }
 
 fn handle_non_interactive_mode(conn: &Connection) -> Result<()> {
-    let mut buffer = String::new();
-    std::io::stdin().read_to_string(&mut buffer)
-        .context("Failed to read input from stdin")?;
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
     
-    let commands: Vec<&str> = if buffer.contains(';') {
-        buffer.split(';').filter(|s| !s.trim().is_empty()).collect()
-    } else {
-        // Handle single commands without semicolons
-        vec![buffer.trim()].into_iter().filter(|s| !s.is_empty()).collect()
-    };
-    
-    let mut error_count = 0;
-    let mut success_count = 0;
-    let bookmarks = Arc::new(Mutex::new(BookmarkManager::new()
-        .with_context(|| "Failed to initialize bookmarks")?));
-    let last_select_query = Arc::new(Mutex::new(String::new()));
-    let transaction_manager = TransactionManager::new();
-    let mut query_options = QueryOptions::default();
-    
-    for command in commands {
-        let cmd = command.trim();
-        if !cmd.is_empty() {
-            // Try special commands first
-            match handle_special_commands(
-                cmd,
-                conn,
-                ".", // db_path not available in this context
-                &bookmarks,
-                &last_select_query,
-                &transaction_manager,
-                &mut query_options,
-            ) {
-                Ok(_) => {
-                    success_count += 1;
-                }
-                Err(_) => {
-                    // Not a special command, try SQL
-                    match execute_sql(conn, cmd, None) {
-                        Ok(_) => success_count += 1,
-                        Err(e) => {
-                            eprintln!("Error executing command: '{}': {}", cmd, e);
-                            error_count += 1;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    if error_count > 0 {
-        eprintln!("Completed with {} error(s) and {} successful command(s)", error_count, success_count);
-    } else if success_count > 0 {
-        println!("All {} command(s) executed successfully", success_count);
-    }
-    
-    Ok(())
+    let options = QueryOptions::default();
+    execute_sql(conn, &input, &options)
 }
 
 fn handle_basic_repl_mode(conn: &Connection) -> Result<()> {
-    println!("Basic REPL mode. Type 'exit' to quit.");
+    let mut buffer = String::new();
+    let options = QueryOptions::default();
     
     loop {
-        print!("> ");
-        std::io::stdout().flush().context("Failed to flush stdout")?;
+        print!("vapor> ");
+        std::io::stdout().flush()?;
         
-        let mut input = String::new();
-        match std::io::stdin().read_line(&mut input) {
-            Ok(_) => {
-                let command = input.trim();
-                if command.eq_ignore_ascii_case("exit") || command.eq_ignore_ascii_case("quit") {
-                    break;
-                }
-                
-                if !command.is_empty() {
-                    if let Err(e) = execute_sql(conn, command, None) {
-                        eprintln!("Error: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Input error: {}", e);
-                break;
-            }
+        buffer.clear();
+        if std::io::stdin().read_line(&mut buffer)? == 0 {
+            break;
+        }
+        
+        let line = buffer.trim();
+        if line.is_empty() {
+            continue;
+        }
+        
+        if let Err(e) = execute_sql(conn, line, &options) {
+            eprintln!("Error: {}", e);
         }
     }
     
@@ -346,29 +281,26 @@ fn is_complete_command(line: &str) -> bool {
 }
 
 fn print_help_summary() {
-    println!("Quick help:");
-    println!("   • Type SQL commands ending with ';'");
-    println!("   • 'help' - Show full command list");
-    println!("   • 'exit' or 'quit' - Exit REPL");
-    println!("   • Press Ctrl+C to interrupt, Ctrl+D for EOF");
-    println!();
+    println!("Vapor CLI - SQLite Database Management");
+    println!("\nSpecial Commands:");
+    println!("  .help              Show this help message");
+    println!("  .tables            List all tables");
+    println!("  .schema [table]    Show schema for all tables or specific table");
+    println!("  .info             Show database information");
+    println!("  .format [type]    Set output format (table, json, csv)");
+    println!("  .limit [n]        Set row limit (0 for no limit)");
+    println!("  .timing           Enable query timing");
+    println!("  .notiming         Disable query timing");
+    println!("  .clear            Clear screen");
+    println!("  .exit/.quit       Exit REPL");
+    println!("\nSQL Commands:");
+    println!("  Enter any valid SQL command ending with semicolon");
+    println!("  Example: SELECT * FROM users;");
 }
 
 fn print_command_error(command: &str, error: &anyhow::Error) {
-    eprintln!("Error in command: {}", command);
-    eprintln!("   {}", error);
-    
-    // Provide contextual suggestions
-    let error_msg = error.to_string().to_lowercase();
-    if error_msg.contains("syntax") {
-        eprintln!("Check SQL syntax and try again");
-    } else if error_msg.contains("no such table") {
-        eprintln!("Use 'tables' to see available tables");
-    } else if error_msg.contains("no such column") {
-        eprintln!("Use 'schema table_name' to see table structure");
-    } else if error_msg.contains("locked") {
-        eprintln!("Database may be locked by another process");
-    }
+    eprintln!("Error executing command '{}':", command);
+    eprintln!("{}", error);
 }
 
 fn is_critical_error(error: &anyhow::Error) -> bool {
@@ -400,13 +332,11 @@ fn cleanup_repl_session(
     // Rollback any active transaction
     if transaction_manager.is_active() {
         println!("Rolling back active transaction...");
-        if let Err(e) = transaction_manager.rollback_transaction(conn) {
-            eprintln!("Warning: Failed to rollback transaction: {}", e);
-        }
+        transaction_manager.rollback_transaction(conn)?;
     }
     
     // Save command history
-    if let Err(e) = rl.save_history(history_path.to_str().unwrap()) {
+    if let Err(e) = rl.save_history(history_path) {
         eprintln!("Warning: Could not save command history: {}", e);
     }
     
@@ -522,19 +452,19 @@ fn handle_special_commands(
         if parts.len() > 1 {
             match parts[1].parse::<usize>() {
                 Ok(0) => {
-                    query_options.limit = None;
-                    println!("Row limit disabled");
+                    query_options.max_rows = None;
+                    println!("Row limit removed");
                 },
                 Ok(n) => {
-                    query_options.limit = Some(n);
+                    query_options.max_rows = Some(n);
                     println!("Row limit set to {}", n);
                 },
-                Err(_) => println!("Invalid limit value"),
+                Err(_) => println!("Invalid limit value. Use a positive number or 0 for no limit."),
             }
         } else {
-            match query_options.limit {
-                Some(n) => println!("Current limit: {} rows", n),
-                None => println!("Current limit: no limit"),
+            match query_options.max_rows {
+                None => println!("No row limit set"),
+                Some(n) => println!("Current row limit: {}", n),
             }
         }
         return Ok(());
@@ -545,17 +475,17 @@ fn handle_special_commands(
         if parts.len() > 1 {
             match parts[1].to_lowercase().as_str() {
                 "on" => {
-                    query_options.timing = true;
+                    query_options.show_timing = true;
                     println!("Query timing enabled");
                 },
                 "off" => {
-                    query_options.timing = false;
+                    query_options.show_timing = false;
                     println!("Query timing disabled");
                 },
                 _ => println!("Usage: .timing [on|off]"),
             }
         } else {
-            println!("Query timing: {}", if query_options.timing { "on" } else { "off" });
+            println!("Query timing: {}", if query_options.show_timing { "on" } else { "off" });
         }
         return Ok(());
     }
@@ -578,164 +508,71 @@ fn handle_single_line_command(
     line: &str,
     conn: &Connection,
     db_path: &str,
-    bookmarks: &Arc<Mutex<BookmarkManager>>,
-    last_select_query: &Arc<Mutex<String>>,
-    transaction_manager: &TransactionManager,
+    _bookmarks: &Arc<Mutex<BookmarkManager>>,
+    _last_select_query: &Arc<Mutex<String>>,
+    _transaction_manager: &TransactionManager,
     query_options: &mut QueryOptions,
     _rl: &DefaultEditor,
 ) -> Result<()> {
-    if line.eq_ignore_ascii_case("exit") || line.eq_ignore_ascii_case("quit") {
-        if transaction_manager.is_active() {
-            println!("Warning: Active transaction will be rolled back on exit.");
-            transaction_manager.rollback_transaction(conn)?;
-        }
-        println!("Exiting REPL mode.");
-        return Ok(());
-    }
-
-    if line.eq_ignore_ascii_case("tables") {
-        list_tables(db_path)?;
-        return Ok(());
-    }
-
-    if line.eq_ignore_ascii_case("help") {
-        show_help();
-        return Ok(());
-    }
-
-    if line.eq_ignore_ascii_case("clear") {
-        print!("\x1B[2J\x1B[1;1H");
-        std::io::stdout().flush().context("Failed to flush stdout")?;
-        return Ok(());
-    }
-
-    if line.eq_ignore_ascii_case("info") {
-        show_database_info(conn, db_path)?;
-        return Ok(());
-    }
-
-    if line.starts_with("schema") {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() > 1 {
-            show_table_schema(conn, parts[1])?;
-        } else {
-            show_all_schemas(conn)?;
-        }
-        return Ok(());
-    }
-
-    if line.starts_with(".export") {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() > 1 {
-            let filename = parts[1];
-            let query = last_select_query.lock().unwrap().clone();
-            if query.is_empty() {
-                println!("No SELECT query has been executed yet.");
+    match line.trim() {
+        ".help" => print_help_summary(),
+        ".tables" => list_tables(db_path)?,
+        ".schema" => {
+            if line.contains(' ') {
+                let table_name = line.split_whitespace().nth(1).unwrap();
+                show_table_schema(conn, table_name)?;
             } else {
-                export_to_csv(conn, &query, filename)?;
+                show_all_schemas(conn)?;
             }
-        } else {
-            println!("Usage: .export FILENAME");
         }
-        return Ok(());
-    }
-
-    if line.starts_with(".import") {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 3 {
-            let filename = parts[1];
-            let table_name = parts[2];
-            import_csv_to_table(conn, filename, table_name)?;
-        } else {
-            println!("Usage: .import CSV_FILENAME TABLE_NAME");
-            println!("Example: .import data.csv employees");
-        }
-        return Ok(());
-    }
-
-    if line.starts_with(".format") {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() > 1 {
-            match parts[1].to_lowercase().as_str() {
-                "table" => {
-                    query_options.format = OutputFormat::Table;
-                    println!("Output format set to table");
-                },
-                "json" => {
-                    query_options.format = OutputFormat::Json;
-                    println!("Output format set to JSON");
-                },
-                "csv" => {
-                    query_options.format = OutputFormat::Csv;
-                    println!("Output format set to CSV");
-                },
-                _ => println!("Invalid format. Use: table, json, or csv"),
-            }
-        } else {
+        ".info" => show_database_info(conn, db_path)?,
+        ".format" => {
             println!("Current format: {:?}", query_options.format);
+            println!("Available formats: table, json, csv");
         }
-        return Ok(());
-    }
-
-    if line.starts_with(".limit") {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() > 1 {
-            match parts[1].parse::<usize>() {
-                Ok(0) => {
-                    query_options.limit = None;
-                    println!("Row limit disabled");
-                },
-                Ok(n) => {
-                    query_options.limit = Some(n);
-                    println!("Row limit set to {}", n);
-                },
-                Err(_) => println!("Invalid limit value"),
-            }
-        } else {
-            match query_options.limit {
-                Some(n) => println!("Current limit: {} rows", n),
-                None => println!("Current limit: no limit"),
+        ".format table" => query_options.format = OutputFormat::Table,
+        ".format json" => query_options.format = OutputFormat::Json,
+        ".format csv" => query_options.format = OutputFormat::Csv,
+        ".limit" => {
+            match query_options.max_rows {
+                None => println!("No row limit set"),
+                Some(n) => println!("Current row limit: {}", n),
             }
         }
-        return Ok(());
-    }
-
-    if line.starts_with(".timing") {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() > 1 {
-            match parts[1].to_lowercase().as_str() {
-                "on" => {
-                    query_options.timing = true;
-                    println!("Query timing enabled");
-                },
-                "off" => {
-                    query_options.timing = false;
-                    println!("Query timing disabled");
-                },
-                _ => println!("Usage: .timing [on|off]"),
-            }
-        } else {
-            println!("Query timing: {}", if query_options.timing { "on" } else { "off" });
+        ".limit 0" => {
+            query_options.max_rows = None;
+            println!("Row limit removed");
         }
-        return Ok(());
+        limit_cmd if limit_cmd.starts_with(".limit ") => {
+            if let Ok(n) = limit_cmd.split_whitespace().nth(1).unwrap().parse::<usize>() {
+                query_options.max_rows = Some(n);
+                println!("Row limit set to {}", n);
+            } else {
+                println!("Invalid limit value. Use a positive number or 0 for no limit.");
+            }
+        }
+        ".timing" => {
+            query_options.show_timing = true;
+            println!("Query timing enabled");
+        }
+        ".notiming" => {
+            query_options.show_timing = false;
+            println!("Query timing disabled");
+        }
+        ".timing status" => {
+            println!("Query timing: {}", if query_options.show_timing { "on" } else { "off" });
+        }
+        ".clear" => {
+            print!("\x1B[2J\x1B[1;1H");
+        }
+        ".exit" | ".quit" => {
+            std::process::exit(0);
+        }
+        _ => {
+            // Execute as SQL command
+            execute_sql(conn, line, query_options)?;
+        }
     }
-
-    if line.starts_with(".bookmark") {
-        handle_bookmark_command(line, bookmarks, last_select_query, conn, query_options)?;
-        return Ok(());
-    }
-
-    if line.eq_ignore_ascii_case(".status") {
-        transaction_manager.show_status();
-        return Ok(());
-    }
-
-    if line.ends_with(';') {
-        let command = line.to_string();
-        execute_sql_enhanced(conn, &command, Some(last_select_query.clone()), query_options)?;
-        return Ok(());
-    }
-
     Ok(())
 }
 
@@ -785,7 +622,7 @@ fn handle_bookmark_command(
             let name = parts[2];
             if let Some(bookmark) = bookmarks.get_bookmark(name) {
                 println!("Executing bookmark '{}': {}", name, bookmark.query);
-                execute_sql_enhanced(conn, &bookmark.query, Some(last_select_query.clone()), query_options)?;
+                execute_sql(conn, &bookmark.query, query_options)?;
             } else {
                 println!("Bookmark '{}' not found.", name);
             }
@@ -1008,9 +845,10 @@ fn import_csv_to_table(conn: &Connection, filename: &str, table_name: &str) -> R
         // Show sample of imported data
         let sample_query = format!("SELECT * FROM {} LIMIT 5", table_name);
         println!("\nSample of imported data:");
-        if let Err(e) = execute_sql(conn, &sample_query, None) {
+        let options = QueryOptions::default();
+        if let Err(e) = execute_sql(conn, &sample_query, &options) {
             eprintln!("Could not show sample data: {}", e);
-        }
+        }   
     }
     
     Ok(())

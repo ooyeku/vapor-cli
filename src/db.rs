@@ -204,12 +204,20 @@ fn verify_database_integrity(db_path: &str) -> Result<()> {
         .with_context(|| format!("Cannot open database '{}' for integrity check", db_path))?;
     
     // Run a simple integrity check
-    conn.execute("PRAGMA integrity_check", params![])
+    let integrity_result: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .with_context(|| format!("Database '{}' failed integrity check", db_path))?;
     
+    if integrity_result != "ok" {
+        anyhow::bail!("Database integrity check failed: {}", integrity_result);
+    }
+    
     // Test basic functionality
-    conn.execute("SELECT 1", params![])
+    let test_result: i32 = conn.query_row("SELECT 1", [], |row| row.get(0))
         .with_context(|| format!("Database '{}' failed basic functionality test", db_path))?;
+    
+    if test_result != 1 {
+        anyhow::bail!("Basic functionality test failed: expected 1, got {}", test_result);
+    }
     
     Ok(())
 }

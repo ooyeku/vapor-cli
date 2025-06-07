@@ -121,7 +121,7 @@ fn run() -> Result<()> {
         }
         Commands::Populate { db_path } => {
             validate_database_path(db_path)?;
-            populate_database(db_path)
+            populate_database(db_path, None)
                 .with_context(|| format!("Failed to populate database '{}'", db_path))?;
         }
     }
