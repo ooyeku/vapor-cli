@@ -72,13 +72,13 @@ enum Commands {
 fn main() {
     // Set up better panic handling
     std::panic::set_hook(Box::new(|panic_info| {
-        eprintln!("🚨 Vapor CLI encountered an unexpected error:");
-        eprintln!("   {}", panic_info);
-        eprintln!("🔧 This may be due to:");
+        eprintln!("Vapor CLI encountered an unexpected error:");
+        eprintln!("{}", panic_info);
+        eprintln!("This may be due to:");
         eprintln!("   • Corrupted database file");
         eprintln!("   • Insufficient system resources");
         eprintln!("   • Hardware issues");
-        eprintln!("💡 Try restarting the application or check your database file integrity.");
+        eprintln!("Try restarting the application or check your database file integrity.");
     }));
 
     // Run the main application and handle errors gracefully
@@ -196,7 +196,7 @@ fn validate_column_definition(columns: &str) -> Result<()> {
 }
 
 fn print_error_with_context(error: &anyhow::Error) {
-    eprintln!("❌ Error: {}", error);
+    eprintln!("Error: {}", error);
     
     // Print the error chain for better debugging
     let mut current = error.source();
@@ -213,7 +213,7 @@ fn print_error_with_context(error: &anyhow::Error) {
     // Provide helpful suggestions based on error type
     let error_msg = error.to_string().to_lowercase();
     
-    eprintln!("\n💡 Suggestions:");
+    eprintln!("\nSuggestions:");
     
     if error_msg.contains("no such file") || error_msg.contains("not found") {
         eprintln!("   • Check if the file path is correct");
@@ -241,5 +241,5 @@ fn print_error_with_context(error: &anyhow::Error) {
         eprintln!("   • Try the operation again");
     }
     
-    eprintln!("\n📚 For more help, use: vapor-cli --help");
+    eprintln!("\nFor more help, use: vapor-cli --help");
 }

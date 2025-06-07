@@ -34,15 +34,15 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
         return handle_non_interactive_mode(&conn);
     }
 
-    println!("✅ Connected to database: {}", db_path);
-    println!("🚀 Enhanced REPL with timing, bookmarks, and transaction support");
+    println!("Connected to database: {}", db_path);
+    println!("Enhanced REPL with timing, bookmarks, and transaction support");
     print_help_summary();
 
     // Initialize REPL components with error handling
     let mut rl = match DefaultEditor::new() {
         Ok(editor) => editor,
         Err(e) => {
-            eprintln!("⚠️  Warning: Could not initialize readline editor: {}", e);
+            eprintln!("Warning: Could not initialize readline editor: {}", e);
             eprintln!("   Falling back to basic input mode.");
             return handle_basic_repl_mode(&conn);
         }
@@ -52,13 +52,14 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
     let history_path = Path::new(".vapor_history");
     if history_path.exists() {
         if let Err(e) = rl.load_history(history_path.to_str().unwrap()) {
-            eprintln!("⚠️  Warning: Could not load command history: {}", e);
+            eprintln!("Warning: Could not load command history: {}", e);
         }
     }
 
     let mut multi_line_input = String::new();
     let last_select_query = Arc::new(Mutex::new(String::new()));
-    let mut bookmarks = BookmarkManager::new();
+    let bookmarks = Arc::new(Mutex::new(BookmarkManager::new()
+        .with_context(|| "Failed to initialize bookmarks")?));
     let transaction_manager = TransactionManager::new();
     let mut query_options = QueryOptions::default();
 
@@ -79,7 +80,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                                 if let Some(command) = command_to_execute {
                      // Add to history before execution
                      if let Err(e) = rl.add_history_entry(&command) {
-                         eprintln!("⚠️  Warning: Could not add to history: {}", e);
+                         eprintln!("Warning: Could not add to history: {}", e);
                      }
 
                      // Check if it's a special command first
@@ -87,7 +88,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                          &command,
                          &conn,
                          db_path,
-                         &mut bookmarks,
+                         &bookmarks,    
                          &last_select_query,
                          &transaction_manager,
                          &mut query_options,
@@ -104,12 +105,12 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                                          if offer_reconnection(db_path) {
                                              match create_robust_connection(db_path) {
                                                  Ok(_new_conn) => {
-                                                     println!("✅ Reconnected successfully!");
+                                                     println!("Reconnected successfully!");
                                                      // Note: Connection replacement would require refactoring
                                                  }
                                                  Err(reconnect_err) => {
-                                                     eprintln!("❌ Reconnection failed: {}", reconnect_err);
-                                                     eprintln!("💡 You may need to restart the REPL.");
+                                                     eprintln!("Reconnection failed: {}", reconnect_err);
+                                                     eprintln!("You may need to restart the REPL.");
                                                  }
                                              }
                                          }
@@ -117,7 +118,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                                  }
                              }
                          } else {
-                             println!("❌ Error handling transaction command");
+                             println!("Error handling transaction command");
                          }
                      }
                  } else {
@@ -126,7 +127,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                          line,
                          &conn,
                          db_path,
-                         &mut bookmarks,
+                         &bookmarks,
                          &last_select_query,
                          &transaction_manager,
                          &mut query_options,
@@ -145,8 +146,8 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                 break;
             }
             Err(err) => {
-                eprintln!("❌ Input error: {}", err);
-                eprintln!("💡 Try typing your command again or type 'help' for assistance.");
+                eprintln!("Input error: {}", err);
+                eprintln!("Try typing your command again or type 'help' for assistance.");
                 continue;
             }
         }
@@ -154,7 +155,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
 
     // Cleanup on exit
     cleanup_repl_session(&conn, &transaction_manager, &mut rl, history_path)?;
-    println!("👋 Goodbye!");
+    println!("Goodbye!");
     Ok(())
 }
 
@@ -167,7 +168,7 @@ fn verify_database_file(db_path: &str) -> Result<()> {
     }
     
     if metadata.len() == 0 {
-        eprintln!("⚠️  Warning: Database file '{}' is empty", db_path);
+        eprintln!("Warning: Database file '{}' is empty", db_path);
     }
     
     Ok(())
@@ -182,12 +183,12 @@ fn create_robust_connection(db_path: &str) -> Result<Connection> {
                 // Test the connection with a simple query instead of execute
                 if conn.prepare("SELECT 1").is_ok() {
                     if attempt > 1 {
-                        println!("✅ Connection succeeded on attempt {}", attempt);
+                        println!("Connection succeeded on attempt {}", attempt);
                     }
                     return Ok(conn);
                 } else {
                     let error_msg = format!("Connection test failed on attempt {}", attempt);
-                    eprintln!("⚠️  {}", error_msg);
+                    eprintln!("{}", error_msg);
                     last_error_msg = error_msg;
                     if attempt < 3 {
                         std::thread::sleep(std::time::Duration::from_millis(100 * attempt as u64));
@@ -199,7 +200,7 @@ fn create_robust_connection(db_path: &str) -> Result<Connection> {
                 let error_msg = format!("Connection attempt {} failed: {}", attempt, e);
                 last_error_msg = error_msg.clone();
                 if attempt < 3 {
-                    eprintln!("⚠️  {}", error_msg);
+                    eprintln!("{}", error_msg);
                     eprintln!("   Retrying...");
                     std::thread::sleep(std::time::Duration::from_millis(100 * attempt as u64));
                 }
@@ -225,7 +226,8 @@ fn handle_non_interactive_mode(conn: &Connection) -> Result<()> {
     
     let mut error_count = 0;
     let mut success_count = 0;
-    let mut bookmarks = BookmarkManager::new();
+    let bookmarks = Arc::new(Mutex::new(BookmarkManager::new()
+        .with_context(|| "Failed to initialize bookmarks")?));
     let last_select_query = Arc::new(Mutex::new(String::new()));
     let transaction_manager = TransactionManager::new();
     let mut query_options = QueryOptions::default();
@@ -238,7 +240,7 @@ fn handle_non_interactive_mode(conn: &Connection) -> Result<()> {
                 cmd,
                 conn,
                 ".", // db_path not available in this context
-                &mut bookmarks,
+                &bookmarks,
                 &last_select_query,
                 &transaction_manager,
                 &mut query_options,
@@ -251,7 +253,7 @@ fn handle_non_interactive_mode(conn: &Connection) -> Result<()> {
                     match execute_sql(conn, cmd, None) {
                         Ok(_) => success_count += 1,
                         Err(e) => {
-                            eprintln!("❌ Error executing command: '{}': {}", cmd, e);
+                            eprintln!("Error executing command: '{}': {}", cmd, e);
                             error_count += 1;
                         }
                     }
@@ -261,16 +263,16 @@ fn handle_non_interactive_mode(conn: &Connection) -> Result<()> {
     }
     
     if error_count > 0 {
-        eprintln!("⚠️  Completed with {} error(s) and {} successful command(s)", error_count, success_count);
+        eprintln!("Completed with {} error(s) and {} successful command(s)", error_count, success_count);
     } else if success_count > 0 {
-        println!("✅ All {} command(s) executed successfully", success_count);
+        println!("All {} command(s) executed successfully", success_count);
     }
     
     Ok(())
 }
 
 fn handle_basic_repl_mode(conn: &Connection) -> Result<()> {
-    println!("💡 Basic REPL mode. Type 'exit' to quit.");
+    println!("Basic REPL mode. Type 'exit' to quit.");
     
     loop {
         print!("> ");
@@ -286,12 +288,12 @@ fn handle_basic_repl_mode(conn: &Connection) -> Result<()> {
                 
                 if !command.is_empty() {
                     if let Err(e) = execute_sql(conn, command, None) {
-                        eprintln!("❌ Error: {}", e);
+                        eprintln!("Error: {}", e);
                     }
                 }
             }
             Err(e) => {
-                eprintln!("❌ Input error: {}", e);
+                eprintln!("Input error: {}", e);
                 break;
             }
         }
@@ -344,7 +346,7 @@ fn is_complete_command(line: &str) -> bool {
 }
 
 fn print_help_summary() {
-    println!("📖 Quick help:");
+    println!("Quick help:");
     println!("   • Type SQL commands ending with ';'");
     println!("   • 'help' - Show full command list");
     println!("   • 'exit' or 'quit' - Exit REPL");
@@ -353,19 +355,19 @@ fn print_help_summary() {
 }
 
 fn print_command_error(command: &str, error: &anyhow::Error) {
-    eprintln!("❌ Error in command: {}", command);
+    eprintln!("Error in command: {}", command);
     eprintln!("   {}", error);
     
     // Provide contextual suggestions
     let error_msg = error.to_string().to_lowercase();
     if error_msg.contains("syntax") {
-        eprintln!("💡 Check SQL syntax and try again");
+        eprintln!("Check SQL syntax and try again");
     } else if error_msg.contains("no such table") {
-        eprintln!("💡 Use 'tables' to see available tables");
+        eprintln!("Use 'tables' to see available tables");
     } else if error_msg.contains("no such column") {
-        eprintln!("💡 Use 'schema table_name' to see table structure");
+        eprintln!("Use 'schema table_name' to see table structure");
     } else if error_msg.contains("locked") {
-        eprintln!("💡 Database may be locked by another process");
+        eprintln!("Database may be locked by another process");
     }
 }
 
@@ -378,7 +380,7 @@ fn is_critical_error(error: &anyhow::Error) -> bool {
 }
 
 fn offer_reconnection(db_path: &str) -> bool {
-    print!("🔄 Would you like to try reconnecting to '{}'? (y/N): ", db_path);
+    print!("Would you like to try reconnecting to '{}'? (y/N): ", db_path);
     std::io::stdout().flush().unwrap_or(());
     
     let mut input = String::new();
@@ -397,15 +399,15 @@ fn cleanup_repl_session(
 ) -> Result<()> {
     // Rollback any active transaction
     if transaction_manager.is_active() {
-        println!("🔄 Rolling back active transaction...");
+        println!("Rolling back active transaction...");
         if let Err(e) = transaction_manager.rollback_transaction(conn) {
-            eprintln!("⚠️  Warning: Failed to rollback transaction: {}", e);
+            eprintln!("Warning: Failed to rollback transaction: {}", e);
         }
     }
     
     // Save command history
     if let Err(e) = rl.save_history(history_path.to_str().unwrap()) {
-        eprintln!("⚠️  Warning: Could not save command history: {}", e);
+        eprintln!("Warning: Could not save command history: {}", e);
     }
     
     Ok(())
@@ -415,7 +417,7 @@ fn handle_special_commands(
     command: &str,
     conn: &Connection,
     db_path: &str,
-    bookmarks: &mut BookmarkManager,
+    bookmarks: &Arc<Mutex<BookmarkManager>>,
     last_select_query: &Arc<Mutex<String>>,
     transaction_manager: &TransactionManager,
     query_options: &mut QueryOptions,
@@ -576,7 +578,7 @@ fn handle_single_line_command(
     line: &str,
     conn: &Connection,
     db_path: &str,
-    bookmarks: &mut BookmarkManager,
+    bookmarks: &Arc<Mutex<BookmarkManager>>,
     last_select_query: &Arc<Mutex<String>>,
     transaction_manager: &TransactionManager,
     query_options: &mut QueryOptions,
@@ -739,7 +741,7 @@ fn handle_single_line_command(
 
 fn handle_bookmark_command(
     line: &str,
-    bookmarks: &mut BookmarkManager,
+    bookmarks: &Arc<Mutex<BookmarkManager>>,
     last_select_query: &Arc<Mutex<String>>,
     conn: &Connection,
     query_options: &QueryOptions,
@@ -749,6 +751,8 @@ fn handle_bookmark_command(
         println!("Usage: .bookmark [save|list|run|show|delete] [args...]");
         return Ok(());
     }
+
+    let mut bookmarks = bookmarks.lock().unwrap();
 
     match parts[1] {
         "save" => {
@@ -882,10 +886,10 @@ fn import_csv_to_table(conn: &Connection, filename: &str, table_name: &str) -> R
     
     // Check file extension
     if !filename.to_lowercase().ends_with(".csv") {
-        eprintln!("⚠️  Warning: File '{}' doesn't have .csv extension", filename);
+        eprintln!("Warning: File '{}' doesn't have .csv extension", filename);
     }
     
-    println!("📂 Reading CSV file: {}", filename);
+    println!("Reading CSV file: {}", filename);
     
     // Open and read CSV file
     let mut csv_reader = csv::Reader::from_path(filename)
@@ -900,18 +904,18 @@ fn import_csv_to_table(conn: &Connection, filename: &str, table_name: &str) -> R
     }
     
     let column_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
-    println!("📋 Found {} columns: {}", column_names.len(), column_names.join(", "));
+    println!("Found {} columns: {}", column_names.len(), column_names.join(", "));
     
     // Check if table exists
     let table_exists = check_table_exists_repl(conn, table_name)?;
     
     if table_exists {
-        println!("✅ Table '{}' already exists", table_name);
+        println!("Table '{}' already exists", table_name);
         
         // Verify table has compatible columns
         verify_table_compatibility(conn, table_name, &column_names)?;
     } else {
-        println!("🔧 Creating table '{}' with inferred schema", table_name);
+        println!("Creating table '{}' with inferred schema", table_name);
         create_table_from_csv_headers(conn, table_name, &column_names)?;
     }
     
@@ -931,7 +935,7 @@ fn import_csv_to_table(conn: &Connection, filename: &str, table_name: &str) -> R
     let mut error_count = 0;
     let start_time = std::time::Instant::now();
     
-    println!("📊 Importing data...");
+    println!("Importing data...");
     
     // Begin transaction for better performance
     let tx = conn.unchecked_transaction()
@@ -944,7 +948,7 @@ fn import_csv_to_table(conn: &Connection, filename: &str, table_name: &str) -> R
                 
                 if values.len() != column_names.len() {
                     error_count += 1;
-                    eprintln!("⚠️  Row {}: Expected {} columns, got {} - skipping", 
+                    eprintln!("Row {}: Expected {} columns, got {} - skipping", 
                         record_num + 2, column_names.len(), values.len());
                     
                     if error_count > 100 {
@@ -961,12 +965,12 @@ fn import_csv_to_table(conn: &Connection, filename: &str, table_name: &str) -> R
                         if row_count % 10000 == 0 {
                             let elapsed = start_time.elapsed();
                             let rate = row_count as f64 / elapsed.as_secs_f64();
-                            println!("📈 Imported {} rows ({:.0} rows/sec)...", row_count, rate);
+                            println!("Imported {} rows ({:.0} rows/sec)...", row_count, rate);
                         }
                     }
                     Err(e) => {
                         error_count += 1;
-                        eprintln!("⚠️  Row {}: Database error - {}", record_num + 2, e);
+                        eprintln!("Row {}: Database error - {}", record_num + 2, e);
                         
                         if error_count > 100 {
                             anyhow::bail!("Too many database errors ({}). Import stopped.", error_count);
@@ -976,7 +980,7 @@ fn import_csv_to_table(conn: &Connection, filename: &str, table_name: &str) -> R
             }
             Err(e) => {
                 error_count += 1;
-                eprintln!("⚠️  Row {}: CSV parsing error - {}", record_num + 2, e);
+                eprintln!("Row {}: CSV parsing error - {}", record_num + 2, e);
                 
                 if error_count > 100 {
                     anyhow::bail!("Too many parsing errors ({}). Import stopped.", error_count);
@@ -992,20 +996,20 @@ fn import_csv_to_table(conn: &Connection, filename: &str, table_name: &str) -> R
     let duration = start_time.elapsed();
     
     if error_count > 0 {
-        println!("⚠️  Import completed with {} error(s)", error_count);
+        println!("Import completed with {} error(s)", error_count);
     }
     
-    println!("✅ Successfully imported {} rows into table '{}' in {:.2} seconds", 
+    println!("Successfully imported {} rows into table '{}' in {:.2} seconds", 
         row_count, table_name, duration.as_secs_f64());
     
     if row_count > 0 {
-        println!("🚀 Average: {:.0} rows/second", row_count as f64 / duration.as_secs_f64());
+        println!("Average: {:.0} rows/second", row_count as f64 / duration.as_secs_f64());
         
         // Show sample of imported data
         let sample_query = format!("SELECT * FROM {} LIMIT 5", table_name);
-        println!("\n📊 Sample of imported data:");
+        println!("\nSample of imported data:");
         if let Err(e) = execute_sql(conn, &sample_query, None) {
-            eprintln!("⚠️  Could not show sample data: {}", e);
+            eprintln!("Could not show sample data: {}", e);
         }
     }
     
@@ -1046,12 +1050,12 @@ fn verify_table_compatibility(conn: &Connection, table_name: &str, csv_columns: 
         .collect();
     
     if !missing_in_table.is_empty() {
-        eprintln!("⚠️  Warning: CSV has columns not in table: {}", missing_in_table.join(", "));
+        eprintln!("Warning: CSV has columns not in table: {}", missing_in_table.join(", "));
     }
     
     if !missing_in_csv.is_empty() {
         let missing_csv_strs: Vec<String> = missing_in_csv.iter().map(|s| s.to_string()).collect();
-        eprintln!("⚠️  Warning: Table has columns not in CSV: {}", missing_csv_strs.join(", "));
+        eprintln!("Warning: Table has columns not in CSV: {}", missing_csv_strs.join(", "));
     }
     
     Ok(())
@@ -1068,7 +1072,7 @@ fn create_table_from_csv_headers(conn: &Connection, table_name: &str, column_nam
     conn.execute(&create_sql, [])
         .with_context(|| format!("Failed to create table '{}' for CSV import", table_name))?;
     
-    println!("✅ Created table '{}' with {} columns", table_name, column_names.len());
+    println!("Created table '{}' with {} columns", table_name, column_names.len());
     
     Ok(())
 }

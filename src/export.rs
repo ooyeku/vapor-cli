@@ -42,7 +42,7 @@ pub fn export_to_csv(conn: &Connection, query: &str, filename: &str) -> Result<(
             Ok(record) => {
                 if let Err(e) = wtr.write_record(&record) {
                     error_count += 1;
-                    eprintln!("⚠️  Warning: Failed to write row {}: {}", row_count + 1, e);
+                    eprintln!("Warning: Failed to write row {}: {}", row_count + 1, e);
                     
                     if error_count > 10 {
                         anyhow::bail!("Too many write errors ({}). Stopping export.", error_count);
@@ -52,13 +52,13 @@ pub fn export_to_csv(conn: &Connection, query: &str, filename: &str) -> Result<(
                     
                     // Progress indicator for large exports
                     if row_count % 10000 == 0 {
-                        println!("📊 Exported {} rows...", row_count);
+                        println!("Exported {} rows...", row_count);
                     }
                 }
             }
             Err(e) => {
                 error_count += 1;
-                eprintln!("⚠️  Warning: Failed to process row {}: {}", row_count + 1, e);
+                eprintln!("Warning: Failed to process row {}: {}", row_count + 1, e);
                 
                 if error_count > 10 {
                     anyhow::bail!("Too many processing errors ({}). Stopping export.", error_count);
@@ -75,10 +75,10 @@ pub fn export_to_csv(conn: &Connection, query: &str, filename: &str) -> Result<(
     verify_export_file(filename, row_count)?;
 
     if error_count > 0 {
-        println!("⚠️  Export completed with {} warning(s)", error_count);
+        println!("Export completed with {} warning(s)", error_count);
     }
     
-    println!("✅ Successfully exported {} rows to '{}'", row_count, filename);
+    println!("Successfully exported {} rows to '{}'", row_count, filename);
     
     Ok(())
 }
@@ -98,7 +98,7 @@ fn validate_export_inputs(query: &str, filename: &str) -> Result<()> {
     let dangerous_keywords = ["drop", "delete", "update", "insert", "create", "alter"];
     for keyword in &dangerous_keywords {
         if query_lower.contains(keyword) {
-            eprintln!("⚠️  Warning: Query contains '{}' - this may modify data", keyword);
+            eprintln!("Warning: Query contains '{}' - this may modify data", keyword);
         }
     }
     
@@ -118,7 +118,7 @@ fn validate_export_inputs(query: &str, filename: &str) -> Result<()> {
     
     // Check if file already exists and warn user
     if Path::new(filename).exists() {
-        eprintln!("⚠️  Warning: File '{}' already exists and will be overwritten", filename);
+        eprintln!("Warning: File '{}' already exists and will be overwritten", filename);
     }
     
     // Check if the directory is writable
@@ -192,7 +192,7 @@ fn verify_export_file(filename: &str, expected_rows: usize) -> Result<()> {
     // Basic file size sanity check
     let file_size = metadata.len();
     if file_size > 0 {
-        println!("📁 Export file size: {} bytes", file_size);
+        println!("Export file size: {} bytes", file_size);
     }
     
     Ok(())

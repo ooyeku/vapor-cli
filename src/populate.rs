@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 /// Populate database with test data, featuring comprehensive error handling and progress tracking
 pub fn populate_database(db_path: &str) -> Result<()> {
-    println!("🔗 Connecting to database: {}", db_path);
+    println!("Connecting to database: {}", db_path);
     
     // Validate database exists and is accessible
     validate_database_for_population(db_path)?;
@@ -15,11 +15,11 @@ pub fn populate_database(db_path: &str) -> Result<()> {
     // Check available disk space before starting
     check_disk_space_requirements(db_path)?;
     
-    println!("🔧 Creating large table...");
+    println!("Creating large table...");
     create_large_table(&conn)?;
     
-    println!("📊 Populating table with 1,000,000 rows...");
-    println!("⏳ This may take a while. Progress will be shown every 100,000 rows.");
+    println!("Populating table with 1,000,000 rows...");
+    println!("This may take a while. Progress will be shown every 100,000 rows.");
     
     let start_time = Instant::now();
     
@@ -29,20 +29,20 @@ pub fn populate_database(db_path: &str) -> Result<()> {
     match result {
         Ok(rows_inserted) => {
             let duration = start_time.elapsed();
-            println!("✅ Successfully populated table 'large_table' with {} rows", rows_inserted);
-            println!("⏱️  Total time: {:.2} seconds", duration.as_secs_f64());
-            println!("🚀 Average: {:.0} rows/second", rows_inserted as f64 / duration.as_secs_f64());
+            println!("Successfully populated table 'large_table' with {} rows", rows_inserted);
+            println!("Total time: {:.2} seconds", duration.as_secs_f64());
+            println!("Average: {:.0} rows/second", rows_inserted as f64 / duration.as_secs_f64());
         }
         Err(e) => {
-            eprintln!("❌ Population failed: {}", e);
-            eprintln!("🔄 Attempting to rollback any partial changes...");
+            eprintln!("Population failed: {}", e);
+            eprintln!("Attempting to rollback any partial changes...");
             
             // Try to clean up any partial data
             if let Err(cleanup_err) = cleanup_failed_population(&conn) {
-                eprintln!("⚠️  Warning: Cleanup failed: {}", cleanup_err);
-                eprintln!("💡 You may need to manually drop the 'large_table' if it was partially created.");
+                eprintln!("Warning: Cleanup failed: {}", cleanup_err);
+                eprintln!("You may need to manually drop the 'large_table' if it was partially created.");
             } else {
-                println!("✅ Cleanup completed successfully");
+                println!("Cleanup completed successfully");
             }
             
             return Err(e);
@@ -82,7 +82,7 @@ fn create_connection_with_settings(db_path: &str) -> Result<Connection> {
     conn.execute("PRAGMA cache_size = 10000", [])
         .context("Failed to increase cache size")?;
     
-    println!("🔧 Database configured for bulk insert performance");
+    println!("Database configured for bulk insert performance");
     
     Ok(conn)
 }
@@ -91,16 +91,16 @@ fn check_disk_space_requirements(db_path: &str) -> Result<()> {
     // Estimate space needed: 1M rows * ~200 bytes per row = ~200MB
     let estimated_size_mb = 200;
     
-    println!("💽 Estimated space needed: ~{} MB", estimated_size_mb);
+    println!("Estimated space needed: ~{} MB", estimated_size_mb);
     
     // Try to get available space (this is platform-specific, so we'll make it non-fatal)
     if let Ok(metadata) = std::fs::metadata(db_path) {
         if metadata.len() == 0 {
-            eprintln!("⚠️  Warning: Database file appears to be empty");
+            eprintln!("Warning: Database file appears to be empty");
         }
     }
     
-    println!("💡 Ensure you have sufficient disk space before proceeding");
+    println!("Ensure you have sufficient disk space before proceeding");
     Ok(())
 }
 
@@ -131,10 +131,10 @@ fn create_large_table(conn: &Connection) -> Result<()> {
     ).context("Failed to check existing row count")?;
     
     if existing_count > 0 {
-        println!("⚠️  Table 'large_table' already contains {} rows", existing_count);
-        println!("💡 Population will add 1,000,000 more rows");
+        println!("Table 'large_table' already contains {} rows", existing_count);
+        println!("Population will add 1,000,000 more rows");
     } else {
-        println!("✅ Table 'large_table' created successfully");
+        println!("Table 'large_table' created successfully");
     }
     
     Ok(())
@@ -182,7 +182,7 @@ fn populate_with_transaction(conn: &mut Connection) -> Result<usize> {
                         Duration::from_secs(0)
                     };
                     
-                    println!("📈 Progress: {}/{} rows ({:.1}%) - {:.0} rows/sec - ETA: {:?}", 
+                    println!("Progress: {}/{} rows ({:.1}%) - {:.0} rows/sec - ETA: {:?}", 
                         rows_inserted, total_rows, 
                         (rows_inserted as f64 / total_rows as f64) * 100.0,
                         rate,
@@ -190,11 +190,11 @@ fn populate_with_transaction(conn: &mut Connection) -> Result<usize> {
                 }
             }
             Err(e) => {
-                eprintln!("❌ Failed to insert row {}: {}", i + 1, e);
+                eprintln!("Failed to insert row {}: {}", i + 1, e);
                 
                 // Try to continue with a few retries for transient errors
                 if is_transient_error(&e) && should_retry_insert(rows_inserted) {
-                    eprintln!("🔄 Retrying row {}...", i + 1);
+                    eprintln!("Retrying row {}...", i + 1);
                     std::thread::sleep(Duration::from_millis(10));
                     continue;
                 } else {
@@ -204,7 +204,7 @@ fn populate_with_transaction(conn: &mut Connection) -> Result<usize> {
         }
     }
     
-    println!("💾 Committing transaction...");
+    println!("Committing transaction...");
     drop(stmt); // Release the prepared statement before committing
     tx.commit()
         .context("Failed to commit transaction. All changes have been rolled back.")?;
@@ -248,8 +248,8 @@ fn cleanup_failed_population(conn: &Connection) -> Result<()> {
         ).context("Failed to count rows in large_table")?;
         
         if row_count > 0 {
-            println!("🧹 Table 'large_table' contains {} partial rows", row_count);
-            println!("💡 Run 'DROP TABLE large_table;' to remove it, or try populating again");
+            println!("Table 'large_table' contains {} partial rows", row_count);
+            println!("Run 'DROP TABLE large_table;' to remove it, or try populating again");
         }
     }
     
@@ -276,18 +276,18 @@ fn verify_population_success(conn: &Connection) -> Result<()> {
     
     if let Some((col1, col2)) = sample_row {
         if col1 == 12345 && col2 == "text-col2-12345" {
-            println!("✅ Data integrity verification passed");
+            println!("Data integrity verification passed");
         } else {
-            eprintln!("⚠️  Warning: Data integrity check failed - sample data doesn't match expected values");
+            eprintln!("Warning: Data integrity check failed - sample data doesn't match expected values");
         }
     }
     
-    println!("📊 Final row count: {} rows in 'large_table'", final_count);
+    println!("Final row count: {} rows in 'large_table'", final_count);
     
     if final_count >= 1_000_000 {
-        println!("🎉 Population completed successfully!");
+        println!("Population completed successfully!");
     } else {
-        eprintln!("⚠️  Warning: Expected at least 1,000,000 rows but found {}", final_count);
+        eprintln!("Warning: Expected at least 1,000,000 rows but found {}", final_count);
     }
     
     Ok(())

@@ -15,7 +15,7 @@ pub fn init_database(name: &str) -> Result<()> {
 
     // Check if the database already exists
     if Path::new(&db_path).exists() {
-        println!("✅ Database '{}' already exists.", db_path);
+        println!("Database '{}' already exists.", db_path);
         // Verify it's a valid SQLite database
         verify_database_integrity(&db_path)?;
         return Ok(());
@@ -24,7 +24,7 @@ pub fn init_database(name: &str) -> Result<()> {
     // Create the database directory if it doesn't exist
     if let Some(parent) = Path::new(&db_path).parent() {
         if !parent.exists() {
-            println!("📁 Creating directory: {:?}", parent);
+            println!("Creating directory: {:?}", parent);
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create directory: {:?}. Check permissions and disk space.", parent))?;
         }
@@ -36,7 +36,7 @@ pub fn init_database(name: &str) -> Result<()> {
     // Verify the database was created successfully
     verify_database_integrity(&db_path)?;
 
-    println!("✅ Successfully created database: {}", db_path);
+    println!("Successfully created database: {}", db_path);
     // Connection will be automatically dropped when it goes out of scope
 
     Ok(())
@@ -67,7 +67,7 @@ pub fn connect_database(path: &str) -> Result<()> {
     // Verify database integrity
     verify_database_integrity(path)?;
 
-    println!("✅ Successfully connected to database: {}", path);
+    println!("Successfully connected to database: {}", path);
     // Connection will be automatically dropped when it goes out of scope
 
     Ok(())
@@ -90,7 +90,7 @@ pub fn create_table(db_path: &str, table_name: &str, columns: &str) -> Result<()
     // Check if table already exists
     let table_exists = check_table_exists(&conn, table_name)?;
     if table_exists {
-        println!("⚠️  Table '{}' already exists in database: {}", table_name, db_path);
+        println!("Table '{}' already exists in database: {}", table_name, db_path);
         return Ok(());
     }
 
@@ -114,7 +114,7 @@ pub fn create_table(db_path: &str, table_name: &str, columns: &str) -> Result<()
         anyhow::bail!("Table creation appeared to succeed but table '{}' is not found", table_name);
     }
 
-    println!("✅ Successfully created table '{}' in database: {}", table_name, db_path);
+    println!("Successfully created table '{}' in database: {}", table_name, db_path);
     // Connection will be automatically dropped when it goes out of scope
 
     Ok(())
@@ -157,12 +157,12 @@ pub fn list_tables(db_path: &str) -> Result<()> {
     }
 
     if has_tables {
-        println!("📋 Tables in database '{}':", db_path);
+        println!("Tables in database '{}':", db_path);
         table.printstd();
-        println!("📊 Total: {} table(s)", table_count);
+        println!("Total: {} table(s)", table_count);
     } else {
-        println!("📭 No tables found in database: {}", db_path);
-        println!("💡 Use 'create-table' command to create your first table.");
+        println!("No tables found in database: {}", db_path);
+        println!("Use 'create-table' command to create your first table.");
     }
 
     // Connection will be automatically dropped when it goes out of scope
@@ -177,14 +177,14 @@ fn create_connection_with_retry(db_path: &str, max_retries: u32) -> Result<Conne
         match Connection::open(db_path) {
             Ok(conn) => {
                 if attempt > 1 {
-                    println!("✅ Connection succeeded on attempt {}", attempt);
+                    println!("Connection succeeded on attempt {}", attempt);
                 }
                 return Ok(conn);
             }
             Err(e) => {
                 last_error = Some(e);
                 if attempt < max_retries {
-                    println!("⚠️  Connection attempt {} failed, retrying...", attempt);
+                    println!("Connection attempt {} failed, retrying...", attempt);
                     std::thread::sleep(Duration::from_millis(100 * attempt as u64));
                 }
             }
