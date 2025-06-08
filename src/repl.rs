@@ -35,7 +35,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
     }
 
     println!("Connected to database: {}", db_path);
-    println!("Enhanced REPL with timing, bookmarks, and transaction support");
+    println!("REPL with timing, bookmarks, and transaction support");
     print_help_summary();
 
     // Initialize REPL components with error handling
@@ -212,14 +212,16 @@ fn handle_non_interactive_mode(conn: &Connection) -> Result<()> {
 }
 
 fn handle_basic_repl_mode(conn: &Connection) -> Result<()> {
-    let mut buffer = String::new();
+    let mut buffer = String::with_capacity(1024);  // Pre-allocate buffer with reasonable capacity
     let options = QueryOptions::default();
+    let stdout = std::io::stdout();
+    let mut stdout_handle = stdout.lock();  // Lock stdout once instead of multiple times
     
     loop {
-        print!("vapor> ");
-        std::io::stdout().flush()?;
+        stdout_handle.write_all(b"vapor> ")?;
+        stdout_handle.flush()?;
         
-        buffer.clear();
+        buffer.clear();  // Clear buffer without deallocating
         if std::io::stdin().read_line(&mut buffer)? == 0 {
             break;
         }
@@ -230,7 +232,7 @@ fn handle_basic_repl_mode(conn: &Connection) -> Result<()> {
         }
         
         if let Err(e) = execute_sql(conn, line, &options) {
-            eprintln!("Error: {}", e);
+            writeln!(stdout_handle, "Error: {}", e)?;
         }
     }
     
