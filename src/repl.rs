@@ -474,6 +474,19 @@ fn handle_special_commands(
             handle_bookmark_command(command, bookmarks, last_select_query, conn, query_options)?;
             Ok(())
         }
+        schema_cmd if schema_cmd.starts_with(".schema") => {
+            let parts: Vec<&str> = schema_cmd.split_whitespace().collect();
+            if parts.len() == 1 {
+                // Just ".schema" - show all schemas
+                show_all_schemas(conn)?;
+            } else if parts.len() == 2 {
+                // ".schema table_name" - show specific table schema
+                show_table_schema(conn, parts[1])?;
+            } else {
+                println!("Usage: .schema [table_name]");
+            }
+            Ok(())
+        }
         ".status" => {
             transaction_manager.show_status();
             Ok(())
