@@ -4,11 +4,13 @@ pub mod display;
 pub mod export;
 pub mod transactions;
 pub mod repl;
+pub mod shell;
 
 pub use repl::repl_mode;
 pub use db::list_tables;
 pub use display::{execute_sql, show_table_schema, show_all_schemas, show_database_info, OutputFormat, QueryOptions};
 pub use export::export_to_csv;
+pub use shell::Shell;
 
 #[cfg(test)]
 mod tests {

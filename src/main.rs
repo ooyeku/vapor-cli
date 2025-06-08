@@ -8,6 +8,7 @@ mod display;
 mod export;
 mod populate;
 mod repl;
+mod shell;
 mod transactions;
 
 use db::{init_database, connect_database, create_table, list_tables};
