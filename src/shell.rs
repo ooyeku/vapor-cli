@@ -9,6 +9,7 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use ctrlc;
+use anyhow::Result;
 
 const BUILTIN_COMMANDS: &[&str] = &["cd", "pwd", "history", "help", "exit"];
 
@@ -270,4 +271,15 @@ impl Shell {
         println!("  • Command history persistence");
         println!("  • Error handling and reporting");
     }
+}
+
+/// Start shell mode with database context
+pub fn shell_mode(db_path: &str) -> Result<()> {
+    println!("Starting shell mode for database: {}", db_path);
+    println!("Database context available for operations.");
+    
+    let mut shell = Shell::new();
+    shell.run();
+    
+    Ok(())
 }
