@@ -4,25 +4,39 @@ use std::env;
 use std::path::Path;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
+use ctrlc;
 
 pub struct Shell {
     prompt: String,
     history: Vec<String>,
     editor: DefaultEditor,
     original_dir: std::path::PathBuf,
+    history_path: std::path::PathBuf,
 }
 
 impl Shell {
     pub fn new() -> Self {
         let mut editor = DefaultEditor::new().unwrap();
         let original_dir = env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+        
+        // Set up history path in home directory
+        let history_path = match env::var("HOME") {
+            Ok(home) => Path::new(&home).join(".vapor_shell_history"),
+            Err(_) => Path::new(".vapor_shell_history").to_path_buf(),
+        };
 
         // Load history if available
-        let history_path = Path::new(".vapor_shell_history");
         if history_path.exists() {
-            if let Err(e) = editor.load_history(history_path) {
+            if let Err(e) = editor.load_history(&history_path) {
                 eprintln!("Warning: Could not load shell history: {}", e);
             }
+        }
+
+        // Set up Ctrl+C handler
+        if let Err(e) = ctrlc::set_handler(move || {
+            println!("\nUse 'exit' to return to the REPL");
+        }) {
+            eprintln!("Warning: Could not set up Ctrl+C handler: {}", e);
         }
 
         Shell {
@@ -30,6 +44,7 @@ impl Shell {
             history: Vec::new(),
             editor,
             original_dir,
+            history_path,
         }
     }
 
@@ -56,8 +71,7 @@ impl Shell {
                     if line == "exit" {
                         println!("Returning to REPL...");
                         // Save history before exiting
-                        let history_path = Path::new(".vapor_shell_history");
-                        if let Err(e) = self.editor.save_history(history_path) {
+                        if let Err(e) = self.editor.save_history(&self.history_path) {
                             eprintln!("Warning: Could not save shell history: {}", e);
                         }
                         // Restore original directory
@@ -90,8 +104,7 @@ impl Shell {
         }
 
         // Save history
-        let history_path = Path::new(".vapor_shell_history");
-        if let Err(e) = self.editor.save_history(history_path) {
+        if let Err(e) = self.editor.save_history(&self.history_path) {
             eprintln!("Warning: Could not save shell history: {}", e);
         }
         // Restore original directory
@@ -140,9 +153,18 @@ impl Shell {
                     Ok(output) => {
                         io::stdout().write_all(&output.stdout).unwrap();
                         io::stderr().write_all(&output.stderr).unwrap();
+                        
+                        if !output.status.success() {
+                            if let Some(code) = output.status.code() {
+                                eprintln!("Command failed with exit code: {}", code);
+                            }
+                        }
                     }
                     Err(e) => {
                         eprintln!("Error executing command: {}", e);
+                        if e.kind() == io::ErrorKind::NotFound {
+                            eprintln!("Command not found: {}", parts[0]);
+                        }
                     }
                 }
             }
