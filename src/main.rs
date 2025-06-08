@@ -8,11 +8,13 @@ mod display;
 mod export;
 mod populate;
 mod repl;
+mod shell;
 mod transactions;
 
 use db::{init_database, connect_database, create_table, list_tables};
 use populate::populate_database;
 use repl::repl_mode;
+use shell::shell_mode;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -63,6 +65,12 @@ enum Commands {
     },
     /// Populate the database with a large amount of data for testing
     Populate {
+        /// Path to the database file
+        #[arg(short, long)]
+        db_path: String,
+    },
+    /// Start shell mode with database context
+    Shell {
         /// Path to the database file
         #[arg(short, long)]
         db_path: String,
@@ -123,6 +131,11 @@ fn run() -> Result<()> {
             validate_database_path(db_path)?;
             populate_database(db_path, None)
                 .with_context(|| format!("Failed to populate database '{}'", db_path))?;
+        }
+        Commands::Shell { db_path } => {
+            validate_database_path(db_path)?;
+            shell_mode(db_path)
+                .with_context(|| format!("Shell session failed for database '{}'", db_path))?;
         }
     }
 

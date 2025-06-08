@@ -1,4 +1,4 @@
-use anyhow::{Result};
+use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
@@ -102,7 +102,46 @@ impl TransactionManager {
                 self.rollback_transaction(conn)?;
                 Ok(true) // Command was handled
             },
-            _ => Ok(false) // Command was not a transaction command
+            _ => {
+                // Handle DROP commands
+                if sql_lower.starts_with("drop") {
+                    let parts: Vec<&str> = sql_lower.split_whitespace().collect();
+                    if parts.len() < 2 {
+                        println!("Usage: DROP TABLE table_name; or DROP table_name;");
+                        return Ok(true);
+                    }
+                    
+                    let table_name = if parts[1] == "table" {
+                        if parts.len() < 3 {
+                            println!("Usage: DROP TABLE table_name;");
+                            return Ok(true);
+                        }
+                        parts[2].trim_end_matches(';')
+                    } else {
+                        parts[1].trim_end_matches(';')
+                    };
+                    
+                    // Verify table exists before dropping
+                    let mut stmt = conn.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1")
+                        .context("Failed to prepare table existence check")?;
+                    
+                    let count: i64 = stmt.query_row(rusqlite::params![table_name], |row| row.get(0))
+                        .with_context(|| format!("Failed to check if table '{}' exists", table_name))?;
+                    
+                    if count == 0 {
+                        println!("Table '{}' does not exist", table_name);
+                        return Ok(true);
+                    }
+                    
+                    // Execute the DROP command
+                    conn.execute(&format!("DROP TABLE {}", table_name), [])
+                        .with_context(|| format!("Failed to drop table '{}'", table_name))?;
+                    
+                    println!("Table '{}' dropped successfully", table_name);
+                    return Ok(true);
+                }
+                Ok(false) // Command was not handled
+            }
         }
     }
 } 

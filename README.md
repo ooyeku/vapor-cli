@@ -1,6 +1,6 @@
 # Vapor CLI
 
-A command-line interface for SQLite database management with enhanced features for data manipulation, querying, and testing.
+A powerful command-line interface for SQLite database management with enhanced features for data manipulation, querying, testing, and integrated shell capabilities.
 
 ## Installation
 
@@ -35,12 +35,19 @@ Start an interactive REPL:
 vapor-cli repl --db-path my_database.db
 ```
 
+Start shell mode with database context:
+```bash
+vapor-cli shell --db-path my_database.db
+```
+
 Populate database with test data:
 ```bash
 vapor-cli populate --db-path my_database.db
 ```
 
-## REPL Features
+## Features
+
+### REPL Mode
 
 The interactive REPL provides a comprehensive SQL environment with these features:
 
@@ -71,6 +78,54 @@ Session Features:
 - Transaction status indicator
 - Screen clearing
 - Help system
+
+### Shell Mode
+
+Integrated Unix shell with database context:
+
+System Integration:
+- Execute any system command (ls, grep, find, etc.)
+- Built-in commands: `cd`, `pwd`, `history`, `help`, `exit`
+- Tab completion for commands and file paths
+- Dynamic prompt showing current working directory
+
+Navigation:
+- Full filesystem navigation with `cd` command
+- Support for `~` and `~/` path expansion
+- Real-time working directory display
+
+History & Convenience:
+- Command history stored in `~/.vapor_shell_history`
+- Persistent across sessions
+- Proper Ctrl+C handling
+
+### Library API
+
+Use vapor-cli as a library in your Rust projects:
+
+```rust
+use vapor_cli::VaporDB;
+
+// Create or open a database
+let mut db = VaporDB::create("my_database.db")?;
+
+// Execute SQL
+db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")?;
+db.execute("INSERT INTO users (name) VALUES ('Alice')")?;
+
+// Use transactions
+db.begin_transaction()?;
+db.execute("INSERT INTO users (name) VALUES ('Bob')")?;
+db.commit_transaction()?;
+
+// Export data
+db.export_to_csv("users", "users.csv")?;
+
+// Manage bookmarks
+if let Some(bm) = db.bookmark_manager() {
+    bm.save_bookmark("get_users".to_string(), "SELECT * FROM users".to_string(), None)?;
+}
+```
 
 ## Data Import/Export
 

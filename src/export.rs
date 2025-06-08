@@ -111,9 +111,14 @@ fn validate_export_inputs(query: &str, filename: &str) -> Result<()> {
         anyhow::bail!("Filename is too long (maximum 255 characters)");
     }
     
-    // Check for invalid filename characters
-    if filename.contains(|c: char| c.is_control() || "\\/:*?\"<>|".contains(c)) {
-        anyhow::bail!("Filename contains invalid characters. Avoid: \\ / : * ? \" < > |");
+    // Check for invalid filename characters (but allow path separators)
+    let path = Path::new(filename);
+    if let Some(file_name) = path.file_name() {
+        let name_str = file_name.to_string_lossy();
+        // Only check the actual filename part, not the full path
+        if name_str.chars().any(|c| c.is_control() || "\\:*?\"<>|".contains(c)) {
+            anyhow::bail!("Filename contains invalid characters. Avoid: \\ : * ? \" < > |");
+        }
     }
     
     // Check if file already exists and warn user

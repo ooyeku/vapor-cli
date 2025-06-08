@@ -5,6 +5,7 @@ use rustyline::DefaultEditor;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use crate::shell::Shell;
 
 use crate::bookmarks::BookmarkManager;
 use crate::db::list_tables;
@@ -14,8 +15,15 @@ use crate::transactions::TransactionManager;
 
 /// Start an interactive SQL REPL (Read-Eval-Print Loop) with enhanced error handling
 pub fn repl_mode(db_path: &str) -> Result<()> {
+    // Convert to absolute path
+    let db_path = std::fs::canonicalize(db_path)
+        .with_context(|| format!("Failed to resolve absolute path for database '{}'", db_path))?
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Database path contains invalid UTF-8 characters"))?
+        .to_string();
+
     // Validate database exists and is accessible
-    if !Path::new(db_path).exists() {
+    if !Path::new(&db_path).exists() {
         anyhow::bail!(
             "Database '{}' does not exist. Use 'vapor-cli init --name {}' to create it.",
             db_path,
@@ -24,10 +32,10 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
     }
 
     // Verify database integrity before starting REPL
-    verify_database_file(db_path)?;
+    verify_database_file(&db_path)?;
 
     // Connect to the database with retry logic
-    let conn = create_robust_connection(db_path)?;
+    let conn = create_robust_connection(&db_path)?;
 
     // Handle non-interactive mode (piped input)
     if !atty::is(Stream::Stdin) {
@@ -35,7 +43,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
     }
 
     println!("Connected to database: {}", db_path);
-    println!("Enhanced REPL with timing, bookmarks, and transaction support");
+    println!("REPL with timing, bookmarks, and transaction support");
     print_help_summary();
 
     // Initialize REPL components with error handling
@@ -87,7 +95,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                      if let Err(_e) = handle_special_commands(
                          &command,
                          &conn,
-                         db_path,
+                         &db_path,
                          &bookmarks,    
                          &last_select_query,
                          &transaction_manager,
@@ -102,8 +110,8 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                                      
                                      // For critical errors, offer to reconnect
                                      if is_critical_error(&sql_err) {
-                                         if offer_reconnection(db_path) {
-                                             match create_robust_connection(db_path) {
+                                         if offer_reconnection(&db_path) {
+                                             match create_robust_connection(&db_path) {
                                                  Ok(_new_conn) => {
                                                      println!("Reconnected successfully!");
                                                      // Note: Connection replacement would require refactoring
@@ -126,7 +134,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                      if let Err(e) = handle_single_line_command(
                          line,
                          &conn,
-                         db_path,
+                         &db_path,
                          &bookmarks,
                          &last_select_query,
                          &transaction_manager,
@@ -212,14 +220,16 @@ fn handle_non_interactive_mode(conn: &Connection) -> Result<()> {
 }
 
 fn handle_basic_repl_mode(conn: &Connection) -> Result<()> {
-    let mut buffer = String::new();
+    let mut buffer = String::with_capacity(1024);  // Pre-allocate buffer with reasonable capacity
     let options = QueryOptions::default();
+    let stdout = std::io::stdout();
+    let mut stdout_handle = stdout.lock();  // Lock stdout once instead of multiple times
     
     loop {
-        print!("vapor> ");
-        std::io::stdout().flush()?;
+        stdout_handle.write_all(b"vapor> ")?;
+        stdout_handle.flush()?;
         
-        buffer.clear();
+        buffer.clear();  // Clear buffer without deallocating
         if std::io::stdin().read_line(&mut buffer)? == 0 {
             break;
         }
@@ -230,7 +240,7 @@ fn handle_basic_repl_mode(conn: &Connection) -> Result<()> {
         }
         
         if let Err(e) = execute_sql(conn, line, &options) {
-            eprintln!("Error: {}", e);
+            writeln!(stdout_handle, "Error: {}", e)?;
         }
     }
     
@@ -277,7 +287,8 @@ fn is_complete_command(line: &str) -> bool {
          line_lower.starts_with(".") ||
          line_lower.starts_with("begin") ||
          line_lower.starts_with("commit") ||
-         line_lower.starts_with("rollback")
+         line_lower.starts_with("rollback") ||
+         line_lower.starts_with("drop")
 }
 
 fn print_help_summary() {
@@ -352,156 +363,172 @@ fn handle_special_commands(
     transaction_manager: &TransactionManager,
     query_options: &mut QueryOptions,
 ) -> Result<()> {
-    let command = command.trim().trim_end_matches(';');
+    let command = command.trim();
     
-    if command.eq_ignore_ascii_case("exit") || command.eq_ignore_ascii_case("quit") {
-        if transaction_manager.is_active() {
-            println!("Warning: Active transaction will be rolled back on exit.");
-            transaction_manager.rollback_transaction(conn)?;
+    match command {
+        ".help" => {
+            show_help();
+            Ok(())
         }
-        println!("Exiting REPL mode.");
-        std::process::exit(0);
-    }
-
-    if command.eq_ignore_ascii_case("tables") {
-        let _ = list_tables(db_path)?;
-        return Ok(());
-    }
-
-    if command.eq_ignore_ascii_case("help") {
-        show_help();
-        return Ok(());
-    }
-
-    if command.eq_ignore_ascii_case("clear") {
-        print!("\x1B[2J\x1B[1;1H");
-        std::io::stdout().flush().context("Failed to flush stdout")?;
-        return Ok(());
-    }
-
-    if command.eq_ignore_ascii_case("info") {
-        show_database_info(conn, db_path)?;
-        return Ok(());
-    }
-
-    if command.starts_with("schema") {
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        if parts.len() > 1 {
-            show_table_schema(conn, parts[1])?;
-        } else {
-            show_all_schemas(conn)?;
+        ".shell" => {
+            let mut shell = Shell::new();
+            shell.run();
+            Ok(())
         }
-        return Ok(());
-    }
-
-    if command.starts_with(".export") {
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        if parts.len() > 1 {
-            let filename = parts[1];
-            let query = last_select_query.lock().unwrap().clone();
-            if query.is_empty() {
-                println!("No SELECT query has been executed yet.");
-            } else {
-                export_to_csv(conn, &query, filename)?;
-            }
-        } else {
-            println!("Usage: .export FILENAME");
+        ".exit" | ".quit" | "exit" | "quit" => {
+            std::process::exit(0);
         }
-        return Ok(());
-    }
-
-    if command.starts_with(".import") {
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        if parts.len() >= 3 {
-            let filename = parts[1];
-            let table_name = parts[2];
-            import_csv_to_table(conn, filename, table_name)?;
-        } else {
-            println!("Usage: .import CSV_FILENAME TABLE_NAME");
-            println!("Example: .import data.csv employees");
+        ".tables" => {
+            let _ = list_tables(db_path)?;
+            Ok(())
         }
-        return Ok(());
-    }
-
-    if command.starts_with(".format") {
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        if parts.len() > 1 {
-            match parts[1].to_lowercase().as_str() {
-                "table" => {
-                    query_options.format = OutputFormat::Table;
-                    println!("Output format set to table");
-                },
-                "json" => {
-                    query_options.format = OutputFormat::Json;
-                    println!("Output format set to JSON");
-                },
-                "csv" => {
-                    query_options.format = OutputFormat::Csv;
-                    println!("Output format set to CSV");
-                },
-                _ => println!("Invalid format. Use: table, json, or csv"),
-            }
-        } else {
+        ".clear" => {
+            print!("\x1B[2J\x1B[1;1H");
+            std::io::stdout().flush().context("Failed to flush stdout")?;
+            Ok(())
+        }
+        ".info" => {
+            show_database_info(conn, db_path)?;
+            Ok(())
+        }
+        ".format" => {
             println!("Current format: {:?}", query_options.format);
+            println!("Available formats: table, json, csv");
+            Ok(())
         }
-        return Ok(());
-    }
-
-    if command.starts_with(".limit") {
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        if parts.len() > 1 {
-            match parts[1].parse::<usize>() {
-                Ok(0) => {
-                    query_options.max_rows = None;
-                    println!("Row limit removed");
-                },
-                Ok(n) => {
-                    query_options.max_rows = Some(n);
-                    println!("Row limit set to {}", n);
-                },
-                Err(_) => println!("Invalid limit value. Use a positive number or 0 for no limit."),
-            }
-        } else {
+        ".format table" => {
+            query_options.format = OutputFormat::Table;
+            Ok(())
+        }
+        ".format json" => {
+            query_options.format = OutputFormat::Json;
+            Ok(())
+        }
+        ".format csv" => {
+            query_options.format = OutputFormat::Csv;
+            Ok(())
+        }
+        ".limit" => {
             match query_options.max_rows {
                 None => println!("No row limit set"),
                 Some(n) => println!("Current row limit: {}", n),
             }
+            Ok(())
         }
-        return Ok(());
-    }
-
-    if command.starts_with(".timing") {
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        if parts.len() > 1 {
-            match parts[1].to_lowercase().as_str() {
-                "on" => {
-                    query_options.show_timing = true;
-                    println!("Query timing enabled");
-                },
-                "off" => {
-                    query_options.show_timing = false;
-                    println!("Query timing disabled");
-                },
-                _ => println!("Usage: .timing [on|off]"),
+        ".limit 0" => {
+            query_options.max_rows = None;
+            println!("Row limit removed");
+            Ok(())
+        }
+        limit_cmd if limit_cmd.starts_with(".limit ") => {
+            if let Ok(n) = limit_cmd.split_whitespace().nth(1).unwrap().parse::<usize>() {
+                query_options.max_rows = Some(n);
+                println!("Row limit set to {}", n);
+            } else {
+                println!("Invalid limit value. Use a positive number or 0 for no limit.");
             }
-        } else {
-            println!("Query timing: {}", if query_options.show_timing { "on" } else { "off" });
+            Ok(())
         }
-        return Ok(());
+        ".timing" => {
+            query_options.show_timing = true;
+            println!("Query timing enabled");
+            Ok(())
+        }
+        ".notiming" => {
+            query_options.show_timing = false;
+            println!("Query timing disabled");
+            Ok(())
+        }
+        ".timing status" => {
+            println!("Query timing: {}", if query_options.show_timing { "on" } else { "off" });
+            Ok(())
+        }
+        ".export" => {
+            let parts: Vec<&str> = command.split_whitespace().collect();
+            if parts.len() > 1 {
+                let filename = parts[1];
+                let query = last_select_query.lock().unwrap().clone();
+                if query.is_empty() {
+                    println!("No SELECT query has been executed yet.");
+                } else {
+                    export_to_csv(conn, &query, filename)?;
+                }
+            } else {
+                println!("Usage: .export FILENAME");
+            }
+            Ok(())
+        }
+        ".import" => {
+            let parts: Vec<&str> = command.split_whitespace().collect();
+            if parts.len() >= 3 {
+                let filename = parts[1];
+                let table_name = parts[2];
+                import_csv_to_table(conn, filename, table_name)?;
+            } else {
+                println!("Usage: .import CSV_FILENAME TABLE_NAME");
+                println!("Example: .import data.csv employees");
+            }
+            Ok(())
+        }
+        ".bookmark" => {
+            handle_bookmark_command(command, bookmarks, last_select_query, conn, query_options)?;
+            Ok(())
+        }
+        schema_cmd if schema_cmd.starts_with(".schema") => {
+            let parts: Vec<&str> = schema_cmd.split_whitespace().collect();
+            if parts.len() == 1 {
+                // Just ".schema" - show all schemas
+                show_all_schemas(conn)?;
+            } else if parts.len() == 2 {
+                // ".schema table_name" - show specific table schema
+                show_table_schema(conn, parts[1])?;
+            } else {
+                println!("Usage: .schema [table_name]");
+            }
+            Ok(())
+        }
+        ".status" => {
+            transaction_manager.show_status();
+            Ok(())
+        }
+        _ => {
+            // Handle DROP commands
+            if command.to_lowercase().starts_with("drop") {
+                let parts: Vec<&str> = command.split_whitespace().collect();
+                if parts.len() < 2 {
+                    println!("Usage: DROP TABLE table_name; or DROP table_name;");
+                    Ok(())
+                } else {
+                    let table_name = if parts[1].to_lowercase() == "table" {
+                        if parts.len() < 3 {
+                            println!("Usage: DROP TABLE table_name;");
+                            return Ok(());
+                        }
+                        parts[2].trim_end_matches(';')
+                    } else {
+                        parts[1].trim_end_matches(';')
+                    };
+                    
+                    // Verify table exists before dropping
+                    if !check_table_exists_repl(conn, table_name)? {
+                        println!("Table '{}' does not exist", table_name);
+                        Ok(())
+                    } else {
+                        // Execute the DROP command
+                        conn.execute(&format!("DROP TABLE {}", table_name), [])
+                            .with_context(|| format!("Failed to drop table '{}'", table_name))?;
+                        
+                        println!("Table '{}' dropped successfully", table_name);
+                        Ok(())
+                    }
+                }
+            } else {
+                // Execute as SQL command
+                execute_sql(conn, command, query_options)?;
+                Ok(())
+            }
+        }
     }
-
-    if command.starts_with(".bookmark") {
-        handle_bookmark_command(command, bookmarks, last_select_query, conn, query_options)?;
-        return Ok(());
-    }
-
-    if command.eq_ignore_ascii_case(".status") {
-        transaction_manager.show_status();
-        return Ok(());
-    }
-
-    // If we get here, it's not a special command
-    anyhow::bail!("Not a special command")
 }
 
 fn handle_single_line_command(
@@ -565,7 +592,7 @@ fn handle_single_line_command(
         ".clear" => {
             print!("\x1B[2J\x1B[1;1H");
         }
-        ".exit" | ".quit" => {
+        ".exit" | ".quit" | "exit" | "quit" => {
             std::process::exit(0);
         }
         _ => {
