@@ -279,7 +279,8 @@ fn is_complete_command(line: &str) -> bool {
          line_lower.starts_with(".") ||
          line_lower.starts_with("begin") ||
          line_lower.starts_with("commit") ||
-         line_lower.starts_with("rollback")
+         line_lower.starts_with("rollback") ||
+         line_lower.starts_with("drop")
 }
 
 fn print_help_summary() {
@@ -499,6 +500,38 @@ fn handle_special_commands(
 
     if command.eq_ignore_ascii_case(".status") {
         transaction_manager.show_status();
+        return Ok(());
+    }
+
+    // Handle DROP commands
+    if command.to_lowercase().starts_with("drop") {
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        if parts.len() < 2 {
+            println!("Usage: DROP TABLE table_name; or DROP table_name;");
+            return Ok(());
+        }
+        
+        let table_name = if parts[1].to_lowercase() == "table" {
+            if parts.len() < 3 {
+                println!("Usage: DROP TABLE table_name;");
+                return Ok(());
+            }
+            parts[2].trim_end_matches(';')
+        } else {
+            parts[1].trim_end_matches(';')
+        };
+        
+        // Verify table exists before dropping
+        if !check_table_exists_repl(conn, table_name)? {
+            println!("Table '{}' does not exist", table_name);
+            return Ok(());
+        }
+        
+        // Execute the DROP command
+        conn.execute(&format!("DROP TABLE {}", table_name), [])
+            .with_context(|| format!("Failed to drop table '{}'", table_name))?;
+        
+        println!("Table '{}' dropped successfully", table_name);
         return Ok(());
     }
 
