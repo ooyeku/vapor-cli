@@ -14,7 +14,7 @@ mod transactions;
 use db::{init_database, connect_database, create_table, list_tables};
 use populate::populate_database;
 use repl::repl_mode;
-use shell::shell_mode;
+use shell::{shell_mode, ShellAction};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -134,8 +134,15 @@ fn run() -> Result<()> {
         }
         Commands::Shell { db_path } => {
             validate_database_path(db_path)?;
-            shell_mode(db_path)
+            let shell_action = shell_mode(db_path)
                 .with_context(|| format!("Shell session failed for database '{}'", db_path))?;
+            
+            if shell_action == ShellAction::SwitchToRepl {
+                // User wants to switch from shell to REPL
+                println!("\nTransitioning from Shell to REPL...");
+                repl_mode(db_path)
+                    .with_context(|| format!("REPL session failed for database '{}' after exiting shell", db_path))?;
+            }
         }
     }
 

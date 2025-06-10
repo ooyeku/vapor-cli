@@ -371,7 +371,7 @@ fn handle_special_commands(
             Ok(())
         }
         ".shell" => {
-            let mut shell = Shell::new();
+            let mut shell = Shell::new(db_path);
             shell.run();
             Ok(())
         }

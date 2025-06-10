@@ -25,6 +25,7 @@ uuid = { version = "1.6", features = ["v4"] }
 chrono = "0.4"
 dirs = "5.0"
 ctrlc = "3.4"
+colored = "2.0"
+tempfile = "3.8"
 
 [dev-dependencies]
-tempfile = "3.8"

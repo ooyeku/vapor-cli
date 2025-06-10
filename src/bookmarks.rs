@@ -6,6 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tempfile::NamedTempFile;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Bookmark {
@@ -28,7 +29,8 @@ impl BookmarkManager {
         // Use user's home directory for bookmarks file
         let home_dir = dirs::home_dir()
             .context("Could not find home directory")?;
-        let file_path = home_dir.join(".vapor_bookmarks.json");
+        let config_dir = home_dir.join(".vapor");
+        let file_path = config_dir.join("bookmarks.json");
         
         let mut manager = Self {
             bookmarks: HashMap::new(),
@@ -164,21 +166,34 @@ impl BookmarkManager {
     fn save_bookmarks(&self) -> Result<()> {
         let json_data = serde_json::to_string_pretty(&self.bookmarks)?;
         
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = self.file_path.parent() {
-            fs::create_dir_all(parent)
-                .context("Failed to create bookmarks directory")?;
-        }
-        
-        // Write to temporary file first
-        let temp_path = self.file_path.with_extension("json.tmp");
-        fs::write(&temp_path, json_data)
-            .context("Failed to write bookmarks to temporary file")?;
-            
-        // Atomic rename
-        fs::rename(&temp_path, &self.file_path)
-            .context("Failed to save bookmarks file")?;
-            
+        let parent_dir = self.file_path.parent()
+            .ok_or_else(|| anyhow::anyhow!("Bookmarks file path has no parent directory: {:?}", self.file_path))?;
+
+        // Explicitly create the parent directory
+        fs::create_dir_all(parent_dir)
+            .with_context(|| format!("Failed to create bookmarks directory: {:?}", parent_dir))?;
+
+        // Create a named temporary file in the parent directory
+        let mut temp_file = NamedTempFile::new_in(parent_dir)
+            .with_context(|| format!("Failed to create temporary bookmarks file in directory: {:?}", parent_dir))?;
+
+        // Write data to the temporary file
+        use std::io::Write;
+        temp_file.write_all(json_data.as_bytes())
+            .context("Failed to write data to temporary bookmarks file")?;
+
+        // Atomically replace the target file with the temporary file
+        temp_file.persist(&self.file_path)
+            .map_err(|e| {
+                // e is tempfile::PersistError, which contains the std::io::Error and the NamedTempFile.
+                // We are interested in the underlying io::Error for the message.
+                anyhow::anyhow!("Failed to save bookmarks file '{}' (source: {:?}, dest: {:?}): {}", 
+                                self.file_path.display(), 
+                                e.file.path(), // Path of the temporary file that failed to persist
+                                self.file_path, // Target path for persist
+                                e.error) // The std::io::Error
+            })?;
+
         Ok(())
     }
 

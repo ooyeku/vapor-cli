@@ -119,7 +119,7 @@ impl VaporDB {
     
     /// Start the interactive shell
     pub fn start_shell(&self) -> Result<()> {
-        let mut shell = Shell::new();
+        let mut shell = Shell::new(&self.db_path);
         shell.run();
         Ok(())
     }
