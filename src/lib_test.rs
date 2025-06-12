@@ -1,9 +1,19 @@
+//! # Library Integration Tests
+//!
+//! This module contains integration-style tests for the `vapor-cli` library functions.
+//! It uses `tempfile` to create temporary databases for each test, ensuring that
+//! tests are isolated and do not interfere with each other or the user's system.
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
     use std::fs;
 
+        /// Tests the `list_tables` function.
+    ///
+    /// This test verifies that `list_tables` can correctly identify and list the names
+    /// of tables in a newly created database.
     #[test]
     fn test_list_tables() {
         let temp_db = NamedTempFile::new().unwrap();
@@ -21,6 +31,12 @@ mod tests {
         assert!(tables.contains(&"test_table".to_string()));
     }
 
+        /// Tests the `execute_sql` function for basic `INSERT` and `SELECT` operations.
+    ///
+    /// This test ensures that `execute_sql` can:
+    /// 1. Successfully insert data into a table.
+    /// 2. Successfully select data from a table.
+    /// It does not validate the output format, only that the operations execute without error.
     #[test]
     fn test_execute_sql() {
         let temp_db = NamedTempFile::new().unwrap();

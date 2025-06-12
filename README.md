@@ -1,143 +1,124 @@
 # Vapor CLI
 
-A powerful command-line interface for SQLite database management with enhanced features for data manipulation, querying, testing, and integrated shell capabilities.
-
-## Installation
-
-```bash
-cargo install vapor-cli
-```
-
-## Basic Usage
-
-Initialize a new database:
-```bash
-vapor-cli init --name my_database
-```
-
-Connect to an existing database:
-```bash
-vapor-cli connect --path my_database.db
-```
-
-Create a new table:
-```bash
-vapor-cli create-table --db-path my_database.db --name users --columns "id INTEGER PRIMARY KEY, name TEXT, age INTEGER"
-```
-
-List all tables:
-```bash
-vapor-cli list-tables --db-path my_database.db
-```
-
-Start an interactive REPL:
-```bash
-vapor-cli repl --db-path my_database.db
-```
-
-Start shell mode with database context:
-```bash
-vapor-cli shell --db-path my_database.db
-```
-
-Populate database with test data:
-```bash
-vapor-cli populate --db-path my_database.db
-```
+**Vapor CLI** is a powerful, interactive command-line interface for SQLite databases. It's designed to be a lightweight, fast, and user-friendly tool for developers, data analysts, and anyone who works with SQLite. Vapor CLI combines the power of a direct SQL interface with the convenience of a modern shell and data management utilities.
 
 ## Features
 
-### REPL Mode
+- **Interactive SQL REPL**: A robust Read-Eval-Print Loop for executing SQL queries, with multi-line input, command history, and auto-completion.
+- **Interactive Shell**: A built-in shell for navigating the filesystem, running system commands, and managing your database environment without leaving the tool.
+- **Direct SQL Execution**: Run SQL queries directly from your terminal for quick, one-off tasks.
+- **CSV Import/Export**: Seamlessly import data from CSV files into tables or export query results to CSV.
+- **Database Population**: Generate large volumes of synthetic data with configurable schemas, data types, and distributions for testing and development.
+- **Query Bookmarks**: Save, manage, and reuse your frequently used SQL queries with a powerful bookmarking system.
+- **Multiple Output Formats**: Display query results in different formats, including formatted tables, JSON, and CSV.
+- **Explicit Transaction Management**: Manually control database transactions (`BEGIN`, `COMMIT`, `ROLLBACK`) within the REPL.
 
-The interactive REPL provides a comprehensive SQL environment with these features:
+## Installation
 
-SQL Operations:
-- Execute any valid SQL statement ending with semicolon
-- Transaction control with begin/commit/rollback
-- Multi-line input support
+1. **Clone the repository:**
 
-Database Information:
-- List all tables
-- View table schemas
-- Show database statistics
+    ```sh
+    git clone https://github.com/ooyeku/vapor-cli.git
+    cd vapor-cli
+    ```
 
-Output Control:
-- Multiple output formats (table, JSON, CSV)
-- Configurable row limits
-- Query timing
-- Export results to CSV
-- Import data from CSV
+2. **Build the project using Cargo:**
 
-Query Management:
-- Save frequently used queries as bookmarks
-- List and manage saved bookmarks
-- Execute saved queries
+    ```sh
+    cargo build --release
+    ```
 
-Session Features:
-- Command history
-- Transaction status indicator
-- Screen clearing
-- Help system
+    The executable will be located at `target/release/vapor-cli`.
 
-### Shell Mode
+3. **(Optional) Install it locally:**
 
-Integrated Unix shell with database context:
+    To make `vapor-cli` available from anywhere in your system, you can install it using Cargo:
 
-System Integration:
-- Execute any system command (ls, grep, find, etc.)
-- Built-in commands: `cd`, `pwd`, `history`, `help`, `exit`
-- Tab completion for commands and file paths
-- Dynamic prompt showing current working directory
+    ```sh
+    cargo install --path .
+    ```
 
-Navigation:
-- Full filesystem navigation with `cd` command
-- Support for `~` and `~/` path expansion
-- Real-time working directory display
+## Usage
 
-History & Convenience:
-- Command history stored in `~/.vapor_shell_history`
-- Persistent across sessions
-- Proper Ctrl+C handling
+### Initialize a Database
 
-### Library API
+Create a new, empty SQLite database file.
 
-Use vapor-cli as a library in your Rust projects:
-
-```rust
-use vapor_cli::VaporDB;
-
-// Create or open a database
-let mut db = VaporDB::create("my_database.db")?;
-
-// Execute SQL
-db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")?;
-db.execute("INSERT INTO users (name) VALUES ('Alice')")?;
-
-// Use transactions
-db.begin_transaction()?;
-db.execute("INSERT INTO users (name) VALUES ('Bob')")?;
-db.commit_transaction()?;
-
-// Export data
-db.export_to_csv("users", "users.csv")?;
-
-// Manage bookmarks
-if let Some(bm) = db.bookmark_manager() {
-    bm.save_bookmark("get_users".to_string(), "SELECT * FROM users".to_string(), None)?;
-}
+```sh
+vapor-cli init --name my_database.db
 ```
 
-## Data Import/Export
+### Connect to a Database
 
-Import CSV data:
-```
-.import data.csv table_name
+Check the connection to an existing database file.
+
+```sh
+vapor-cli connect --path my_database.db
 ```
 
-Export query results:
+### Interactive SQL REPL
+
+Start an interactive SQL Read-Eval-Print Loop to run queries against a database.
+
+```sh
+vapor-cli repl --db-path my_database.db
 ```
-.export results.csv
+
+Inside the REPL, you can type SQL statements or use special dot-commands:
+
+```sql
+-- Select all users
+SELECT * FROM users;
+
+-- Special commands
+.tables
+.schema users
+.exit
 ```
+
+### Interactive Shell
+
+Start an interactive shell session with the database context loaded.
+
+```sh
+vapor-cli shell --db-path my_database.db
+```
+
+From the shell, you can run system commands or switch back to the REPL:
+
+```sh
+# List files
+ls -l
+
+# Switch back to the REPL
+.vrepl
+```
+
+### Manage Tables
+
+**Create a new table:**
+
+```sh
+vapor-cli create-table --db-path my_database.db --name users --columns "id INTEGER PRIMARY KEY, name TEXT"
+```
+
+**List all tables in the database:**
+
+```sh
+vapor-cli list-tables --db-path my_database.db
+```
+
+### Populate Database
+
+Populate the database with a large amount of sample data for testing purposes.
+
+```sh
+vapor-cli populate --db-path my_database.db
+```
+
+## Configuration
+
+Vapor CLI stores its configuration and history in `~/.config/vapor/`.
 
 ## Configuration
 
