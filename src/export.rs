@@ -3,6 +3,38 @@ use rusqlite::Connection;
 use std::path::Path;
 
 /// Export query results to CSV with comprehensive error handling and validation
+pub fn import_csv_to_table(conn: &mut Connection, file_path: &str, table_name: &str) -> Result<()> {
+    let file = Path::new(file_path);
+    if !file.exists() {
+        anyhow::bail!("File not found: {}", file_path);
+    }
+
+    let mut rdr = csv::Reader::from_path(file_path)?;
+    let headers = rdr.headers()?.clone();
+
+    let tx = conn.transaction()?;
+
+    {
+        let sql = format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            table_name,
+            headers.iter().map(|h| format!("\"{}\"", h)).collect::<Vec<_>>().join(","),
+            headers.iter().map(|_| "?").collect::<Vec<_>>().join(",")
+        );
+
+        let mut stmt = tx.prepare(&sql)?;
+
+        for result in rdr.records() {
+            let record = result?;
+            let params: Vec<&str> = record.iter().collect();
+            stmt.execute(rusqlite::params_from_iter(params))?;
+        }
+    } // stmt is dropped here
+
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn export_to_csv(conn: &Connection, query: &str, filename: &str) -> Result<()> {
     // Validate inputs
     validate_export_inputs(query, filename)?;

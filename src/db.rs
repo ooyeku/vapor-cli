@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use prettytable::{row, Table};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-/// Initialize a new SQLite database with enhanced error handling
+/// Initialize a new SQLite database with comprehensive validation and retry logic for handling temporary issues.
 pub fn init_database(name: &str) -> Result<()> {
     let db_path = if name.ends_with(".db") {
         name.to_string()
@@ -25,8 +25,12 @@ pub fn init_database(name: &str) -> Result<()> {
     if let Some(parent) = Path::new(&db_path).parent() {
         if !parent.exists() {
             println!("Creating directory: {:?}", parent);
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory: {:?}. Check permissions and disk space.", parent))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "Failed to create directory: {:?}. Check permissions and disk space.",
+                    parent
+                )
+            })?;
         }
     }
 
@@ -54,9 +58,9 @@ pub fn connect_database(path: &str) -> Result<()> {
     }
 
     // Check if it's a file (not a directory)
-    let metadata = fs::metadata(path)
-        .with_context(|| format!("Cannot read file metadata for '{}'", path))?;
-    
+    let metadata =
+        fs::metadata(path).with_context(|| format!("Cannot read file metadata for '{}'", path))?;
+
     if metadata.is_dir() {
         anyhow::bail!("'{}' is a directory, not a database file", path);
     }
@@ -90,7 +94,10 @@ pub fn create_table(db_path: &str, table_name: &str, columns: &str) -> Result<()
     // Check if table already exists
     let table_exists = check_table_exists(&conn, table_name)?;
     if table_exists {
-        println!("Table '{}' already exists in database: {}", table_name, db_path);
+        println!(
+            "Table '{}' already exists in database: {}",
+            table_name, db_path
+        );
         return Ok(());
     }
 
@@ -99,7 +106,7 @@ pub fn create_table(db_path: &str, table_name: &str, columns: &str) -> Result<()
 
     // Create the table with proper error handling
     let create_table_sql = format!("CREATE TABLE {} ({})", table_name, columns);
-    
+
     conn.execute(&create_table_sql, params![])
         .with_context(|| {
             format!(
@@ -111,10 +118,16 @@ pub fn create_table(db_path: &str, table_name: &str, columns: &str) -> Result<()
     // Verify table was created successfully
     let table_exists_after = check_table_exists(&conn, table_name)?;
     if !table_exists_after {
-        anyhow::bail!("Table creation appeared to succeed but table '{}' is not found", table_name);
+        anyhow::bail!(
+            "Table creation appeared to succeed but table '{}' is not found",
+            table_name
+        );
     }
 
-    println!("Successfully created table '{}' in database: {}", table_name, db_path);
+    println!(
+        "Successfully created table '{}' in database: {}",
+        table_name, db_path
+    );
     // Connection will be automatically dropped when it goes out of scope
 
     Ok(())
@@ -135,10 +148,12 @@ pub fn list_tables(db_path: &str) -> Result<Vec<String>> {
     let conn = create_connection_with_retry(db_path, 3)?;
 
     // Query for all tables with error handling
-    let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+    let mut stmt = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         .context("Failed to prepare statement for listing tables. Database may be corrupted.")?;
 
-    let table_names = stmt.query_map(params![], |row| row.get::<_, String>(0))
+    let table_names = stmt
+        .query_map(params![], |row| row.get::<_, String>(0))
         .context("Failed to execute query for listing tables")?;
 
     // Create a pretty table for display
@@ -148,10 +163,10 @@ pub fn list_tables(db_path: &str) -> Result<Vec<String>> {
     let mut has_tables = false;
     let mut table_count = 0;
     let mut tables = Vec::new();
-    
+
     for table_name_result in table_names {
-        let name = table_name_result
-            .with_context(|| "Failed to read table name from database result")?;
+        let name =
+            table_name_result.with_context(|| "Failed to read table name from database result")?;
         table.add_row(row![&name]);
         tables.push(name);
         has_tables = true;
@@ -174,7 +189,7 @@ pub fn list_tables(db_path: &str) -> Result<Vec<String>> {
 /// Create a database connection with retry logic for handling temporary issues
 fn create_connection_with_retry(db_path: &str, max_retries: u32) -> Result<Connection> {
     let mut last_error = None;
-    
+
     for attempt in 1..=max_retries {
         match Connection::open(db_path) {
             Ok(conn) => {
@@ -192,7 +207,7 @@ fn create_connection_with_retry(db_path: &str, max_retries: u32) -> Result<Conne
             }
         }
     }
-    
+
     Err(last_error.unwrap())
         .with_context(|| format!(
             "Failed to connect to database '{}' after {} attempts. Database may be locked or corrupted.",
@@ -204,63 +219,75 @@ fn create_connection_with_retry(db_path: &str, max_retries: u32) -> Result<Conne
 fn verify_database_integrity(db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)
         .with_context(|| format!("Cannot open database '{}' for integrity check", db_path))?;
-    
+
     // Run a simple integrity check
-    let integrity_result: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))
+    let integrity_result: String = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .with_context(|| format!("Database '{}' failed integrity check", db_path))?;
-    
+
     if integrity_result != "ok" {
         anyhow::bail!("Database integrity check failed: {}", integrity_result);
     }
-    
+
     // Test basic functionality
-    let test_result: i32 = conn.query_row("SELECT 1", [], |row| row.get(0))
+    let test_result: i32 = conn
+        .query_row("SELECT 1", [], |row| row.get(0))
         .with_context(|| format!("Database '{}' failed basic functionality test", db_path))?;
-    
+
     if test_result != 1 {
-        anyhow::bail!("Basic functionality test failed: expected 1, got {}", test_result);
+        anyhow::bail!(
+            "Basic functionality test failed: expected 1, got {}",
+            test_result
+        );
     }
-    
+
     Ok(())
 }
 
 /// Check if a table exists in the database
 fn check_table_exists(conn: &Connection, table_name: &str) -> Result<bool> {
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1")
+    let mut stmt = conn
+        .prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1")
         .context("Failed to prepare table existence check query")?;
-    
-    let count: i64 = stmt.query_row(params![table_name], |row| row.get(0))
+
+    let count: i64 = stmt
+        .query_row(params![table_name], |row| row.get(0))
         .with_context(|| format!("Failed to check if table '{}' exists", table_name))?;
-    
+
     Ok(count > 0)
 }
 
 /// Validate column definition syntax
 fn validate_column_syntax(columns: &str) -> Result<()> {
     let columns = columns.trim();
-    
+
     // Check for basic SQL injection patterns
     let dangerous_patterns = ["DROP", "DELETE", "INSERT", "UPDATE", "EXEC"];
     let columns_upper = columns.to_uppercase();
-    
+
     for pattern in &dangerous_patterns {
         if columns_upper.contains(pattern) {
-            anyhow::bail!("Column definition contains potentially dangerous SQL keyword: {}", pattern);
+            anyhow::bail!(
+                "Column definition contains potentially dangerous SQL keyword: {}",
+                pattern
+            );
         }
     }
-    
+
     // Check for balanced parentheses
     let open_parens = columns.chars().filter(|&c| c == '(').count();
     let close_parens = columns.chars().filter(|&c| c == ')').count();
-    
+
     if open_parens != close_parens {
         anyhow::bail!("Column definition has unbalanced parentheses");
     }
-    
+
     // Check for at least one column definition
     if !columns.contains(' ') && !columns.contains(',') {
-        anyhow::bail!("Column definition appears incomplete. Example: 'id INTEGER PRIMARY KEY, name TEXT'");
+        anyhow::bail!(
+            "Column definition appears incomplete. Example: 'id INTEGER PRIMARY KEY, name TEXT'"
+        );
     }
-    
+
     Ok(())
-} 
+}

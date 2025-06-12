@@ -32,6 +32,12 @@ impl BookmarkManager {
         let config_dir = home_dir.join(".vapor");
         let file_path = config_dir.join("bookmarks.json");
         
+        // Create .vapor directory if it doesn't exist
+        if !config_dir.exists() {
+            fs::create_dir_all(&config_dir)
+                .with_context(|| format!("Failed to create directory: {}", config_dir.display()))?;
+        }
+        
         let mut manager = Self {
             bookmarks: HashMap::new(),
             file_path,
