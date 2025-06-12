@@ -21,55 +21,55 @@ impl TransactionManager {
 
     pub fn begin_transaction(&self, conn: &Connection) -> Result<()> {
         let mut state = self.state.lock().unwrap();
-        
+
         match *state {
             TransactionState::Active => {
                 println!("Warning: Transaction already active. Use COMMIT or ROLLBACK first.");
                 return Ok(());
-            },
+            }
             TransactionState::None => {
                 conn.execute("BEGIN", [])?;
                 *state = TransactionState::Active;
                 println!("Transaction started.");
             }
         }
-        
+
         Ok(())
     }
 
     pub fn commit_transaction(&self, conn: &Connection) -> Result<()> {
         let mut state = self.state.lock().unwrap();
-        
+
         match *state {
             TransactionState::None => {
                 println!("No active transaction to commit.");
                 return Ok(());
-            },
+            }
             TransactionState::Active => {
                 conn.execute("COMMIT", [])?;
                 *state = TransactionState::None;
                 println!("Transaction committed.");
             }
         }
-        
+
         Ok(())
     }
 
     pub fn rollback_transaction(&self, conn: &Connection) -> Result<()> {
         let mut state = self.state.lock().unwrap();
-        
+
         match *state {
             TransactionState::None => {
                 println!("No active transaction to rollback.");
                 return Ok(());
-            },
+            }
             TransactionState::Active => {
                 conn.execute("ROLLBACK", [])?;
                 *state = TransactionState::None;
                 println!("Transaction rolled back.");
             }
         }
-        
+
         Ok(())
     }
 
@@ -88,20 +88,20 @@ impl TransactionManager {
     // Handle commands that might affect transaction state
     pub fn handle_sql_command(&self, conn: &Connection, sql: &str) -> Result<bool> {
         let sql_lower = sql.to_lowercase().trim().to_string();
-        
+
         match sql_lower.as_str() {
             "begin" | "begin transaction" => {
                 self.begin_transaction(conn)?;
                 Ok(true) // Command was handled
-            },
+            }
             "commit" | "commit transaction" => {
                 self.commit_transaction(conn)?;
                 Ok(true) // Command was handled
-            },
+            }
             "rollback" | "rollback transaction" => {
                 self.rollback_transaction(conn)?;
                 Ok(true) // Command was handled
-            },
+            }
             _ => {
                 // Handle DROP commands
                 if sql_lower.starts_with("drop") {
@@ -110,7 +110,7 @@ impl TransactionManager {
                         println!("Usage: DROP TABLE table_name; or DROP table_name;");
                         return Ok(true);
                     }
-                    
+
                     let table_name = if parts[1] == "table" {
                         if parts.len() < 3 {
                             println!("Usage: DROP TABLE table_name;");
@@ -120,23 +120,29 @@ impl TransactionManager {
                     } else {
                         parts[1].trim_end_matches(';')
                     };
-                    
+
                     // Verify table exists before dropping
-                    let mut stmt = conn.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1")
+                    let mut stmt = conn
+                        .prepare(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                        )
                         .context("Failed to prepare table existence check")?;
-                    
-                    let count: i64 = stmt.query_row(rusqlite::params![table_name], |row| row.get(0))
-                        .with_context(|| format!("Failed to check if table '{}' exists", table_name))?;
-                    
+
+                    let count: i64 = stmt
+                        .query_row(rusqlite::params![table_name], |row| row.get(0))
+                        .with_context(|| {
+                            format!("Failed to check if table '{}' exists", table_name)
+                        })?;
+
                     if count == 0 {
                         println!("Table '{}' does not exist", table_name);
                         return Ok(true);
                     }
-                    
+
                     // Execute the DROP command
                     conn.execute(&format!("DROP TABLE {}", table_name), [])
                         .with_context(|| format!("Failed to drop table '{}'", table_name))?;
-                    
+
                     println!("Table '{}' dropped successfully", table_name);
                     return Ok(true);
                 }
@@ -144,4 +150,4 @@ impl TransactionManager {
             }
         }
     }
-} 
+}

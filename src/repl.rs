@@ -1,3 +1,4 @@
+use crate::shell::Shell;
 use anyhow::{Context, Result};
 use atty::Stream;
 use rusqlite::Connection;
@@ -5,11 +6,13 @@ use rustyline::DefaultEditor;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use crate::shell::Shell;
 
 use crate::bookmarks::BookmarkManager;
 use crate::db::list_tables;
-use crate::display::{execute_sql, show_table_schema, show_all_schemas, show_database_info, OutputFormat, QueryOptions};
+use crate::display::{
+    execute_sql, show_all_schemas, show_database_info, show_table_schema, OutputFormat,
+    QueryOptions,
+};
 use crate::export::{export_to_csv, import_csv_to_table};
 use crate::transactions::TransactionManager;
 
@@ -66,14 +69,15 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
 
     let mut multi_line_input = String::new();
     let last_select_query = Arc::new(Mutex::new(String::new()));
-    let bookmarks = Arc::new(Mutex::new(BookmarkManager::new()
-        .with_context(|| "Failed to initialize bookmarks")?));
+    let bookmarks = Arc::new(Mutex::new(
+        BookmarkManager::new().with_context(|| "Failed to initialize bookmarks")?,
+    ));
     let transaction_manager = TransactionManager::new();
     let mut query_options = QueryOptions::default();
 
     loop {
         let prompt = get_prompt(&multi_line_input, &transaction_manager);
-        
+
         let readline = rl.readline(prompt);
         match readline {
             Ok(line) => {
@@ -85,19 +89,32 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                 // Handle multi-line input
                 let command_to_execute = handle_multi_line_input(&mut multi_line_input, line);
 
-                                if let Some(command) = command_to_execute {
+                if let Some(command) = command_to_execute {
                     let command_trimmed = command.trim();
                     let result = if command_trimmed.starts_with('.') {
-                        handle_special_commands(command_trimmed, &mut conn, &db_path, &bookmarks, &last_select_query, &transaction_manager, &mut query_options)
+                        handle_special_commands(
+                            command_trimmed,
+                            &mut conn,
+                            &db_path,
+                            &bookmarks,
+                            &last_select_query,
+                            &transaction_manager,
+                            &mut query_options,
+                        )
                     } else {
                         match transaction_manager.handle_sql_command(&conn, command_trimmed) {
-                        Ok(true) => Ok(()), // Command was handled, do nothing more.
-                        Ok(false) => {
-                            // Not a transaction command, execute normally.
-                            handle_single_line_command(command_trimmed, &mut conn, &transaction_manager, &mut query_options)
-                        },
-                        Err(e) => Err(e), // Propagate error.
-                    }
+                            Ok(true) => Ok(()), // Command was handled, do nothing more.
+                            Ok(false) => {
+                                // Not a transaction command, execute normally.
+                                handle_single_line_command(
+                                    command_trimmed,
+                                    &mut conn,
+                                    &transaction_manager,
+                                    &mut query_options,
+                                )
+                            }
+                            Err(e) => Err(e), // Propagate error.
+                        }
                     };
 
                     if let Err(e) = result {
@@ -135,22 +152,22 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
 fn verify_database_file(db_path: &str) -> Result<()> {
     let metadata = std::fs::metadata(db_path)
         .with_context(|| format!("Cannot read database file '{}'", db_path))?;
-    
+
     if metadata.is_dir() {
         anyhow::bail!("'{}' is a directory, not a database file", db_path);
     }
-    
+
     if metadata.len() == 0 {
         eprintln!("Warning: Database file '{}' is empty", db_path);
     }
-    
+
     Ok(())
 }
 
 fn create_robust_connection(db_path: &str) -> Result<Connection> {
     let mut last_error = None;
     let max_retries = 3;
-    
+
     for attempt in 1..=max_retries {
         match Connection::open(db_path) {
             Ok(conn) => {
@@ -168,7 +185,7 @@ fn create_robust_connection(db_path: &str) -> Result<Connection> {
             }
         }
     }
-    
+
     Err(last_error.unwrap())
         .with_context(|| format!(
             "Failed to connect to database '{}' after {} attempts. Database may be locked or corrupted.",
@@ -179,36 +196,36 @@ fn create_robust_connection(db_path: &str) -> Result<Connection> {
 fn handle_non_interactive_mode(conn: &Connection) -> Result<()> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
-    
+
     let options = QueryOptions::default();
     execute_sql(conn, &input, &options)
 }
 
 fn handle_basic_repl_mode(conn: &Connection) -> Result<()> {
-    let mut buffer = String::with_capacity(1024);  // Pre-allocate buffer with reasonable capacity
+    let mut buffer = String::with_capacity(1024); // Pre-allocate buffer with reasonable capacity
     let options = QueryOptions::default();
     let stdout = std::io::stdout();
-    let mut stdout_handle = stdout.lock();  // Lock stdout once instead of multiple times
-    
+    let mut stdout_handle = stdout.lock(); // Lock stdout once instead of multiple times
+
     loop {
         stdout_handle.write_all(b"vapor> ")?;
         stdout_handle.flush()?;
-        
-        buffer.clear();  // Clear buffer without deallocating
+
+        buffer.clear(); // Clear buffer without deallocating
         if std::io::stdin().read_line(&mut buffer)? == 0 {
             break;
         }
-        
+
         let line = buffer.trim();
         if line.is_empty() {
             continue;
         }
-        
+
         if let Err(e) = execute_sql(conn, line, &options) {
             writeln!(stdout_handle, "Error: {}", e)?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -246,14 +263,15 @@ fn handle_multi_line_input(multi_line_input: &mut String, line: &str) -> Option<
 fn is_complete_command(line: &str) -> bool {
     let line_lower = line.to_lowercase();
     // These commands don't need semicolons
-    matches!(line_lower.as_str(), 
+    matches!(
+        line_lower.as_str(),
         "exit" | "quit" | "help" | "tables" | "clear" | "info"
-    ) || line_lower.starts_with("schema") ||
-         line_lower.starts_with(".") ||
-         line_lower.starts_with("begin") ||
-         line_lower.starts_with("commit") ||
-         line_lower.starts_with("rollback") ||
-         line_lower.starts_with("drop")
+    ) || line_lower.starts_with("schema")
+        || line_lower.starts_with(".")
+        || line_lower.starts_with("begin")
+        || line_lower.starts_with("commit")
+        || line_lower.starts_with("rollback")
+        || line_lower.starts_with("drop")
 }
 
 fn print_help_summary() {
@@ -281,16 +299,19 @@ fn print_command_error(command: &str, error: &anyhow::Error) {
 
 fn is_critical_error(error: &anyhow::Error) -> bool {
     let error_msg = error.to_string().to_lowercase();
-    error_msg.contains("database is locked") ||
-    error_msg.contains("connection") ||
-    error_msg.contains("i/o error") ||
-    error_msg.contains("disk")
+    error_msg.contains("database is locked")
+        || error_msg.contains("connection")
+        || error_msg.contains("i/o error")
+        || error_msg.contains("disk")
 }
 
 fn offer_reconnection(db_path: &str) -> bool {
-    print!("Would you like to try reconnecting to '{}'? (y/N): ", db_path);
+    print!(
+        "Would you like to try reconnecting to '{}'? (y/N): ",
+        db_path
+    );
     std::io::stdout().flush().unwrap_or(());
-    
+
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_ok() {
         input.trim().to_lowercase().starts_with('y')
@@ -310,12 +331,12 @@ fn cleanup_repl_session(
         println!("Rolling back active transaction...");
         transaction_manager.rollback_transaction(conn)?;
     }
-    
+
     // Save command history
     if let Err(e) = rl.save_history(history_path) {
         eprintln!("Warning: Could not save command history: {}", e);
     }
-    
+
     Ok(())
 }
 
@@ -347,7 +368,9 @@ fn handle_special_commands(
         }
         ".clear" => {
             print!("\x1B[2J\x1B[1;1H");
-            std::io::stdout().flush().context("Failed to flush stdout")?;
+            std::io::stdout()
+                .flush()
+                .context("Failed to flush stdout")?;
         }
         ".info" => show_database_info(conn, db_path)?,
         ".format" => {
@@ -412,7 +435,13 @@ fn handle_special_commands(
             }
         }
         ".bookmark" => {
-            return handle_bookmark_command(command, bookmarks, last_select_query, conn, query_options);
+            return handle_bookmark_command(
+                command,
+                bookmarks,
+                last_select_query,
+                conn,
+                query_options,
+            );
         }
         ".schema" => {
             if parts.len() > 1 {
@@ -425,7 +454,10 @@ fn handle_special_commands(
             transaction_manager.show_status();
         }
         _ => {
-            println!("Unknown command: '{}'. Type '.help' for a list of commands.", command);
+            println!(
+                "Unknown command: '{}'. Type '.help' for a list of commands.",
+                command
+            );
         }
     }
     Ok(())
@@ -483,10 +515,10 @@ fn handle_bookmark_command(
                 bookmarks.save_bookmark(name.clone(), query, description)?;
                 println!("Bookmark '{}' saved.", name);
             }
-        },
+        }
         "list" => {
             bookmarks.list_bookmarks();
-        },
+        }
         "run" => {
             if parts.len() < 3 {
                 println!("Usage: .bookmark run NAME");
@@ -499,7 +531,7 @@ fn handle_bookmark_command(
             } else {
                 println!("Bookmark '{}' not found.", name);
             }
-        },
+        }
         "show" => {
             if parts.len() < 3 {
                 println!("Usage: .bookmark show NAME");
@@ -509,7 +541,7 @@ fn handle_bookmark_command(
             if bookmarks.show_bookmark(name).is_none() {
                 println!("Bookmark '{}' not found.", name);
             }
-        },
+        }
         "delete" => {
             if parts.len() < 3 {
                 println!("Usage: .bookmark delete NAME");
@@ -521,7 +553,7 @@ fn handle_bookmark_command(
             } else {
                 println!("Bookmark '{}' not found.", name);
             }
-        },
+        }
         _ => {
             println!("Unknown bookmark command. Use: save, list, run, show, or delete");
         }
@@ -570,4 +602,3 @@ pub fn show_help() {
     println!("  • Multiple output formats (table, JSON, CSV)");
     println!("  • Query bookmarking system");
 }
-

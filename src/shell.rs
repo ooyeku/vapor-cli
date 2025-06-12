@@ -1,15 +1,15 @@
-use std::io::{self};
-use std::process::Command;
-use std::env;
-use std::path::Path;
-use rustyline::error::ReadlineError;
-use rustyline::{Editor, Helper};
+use anyhow::Result;
+use ctrlc;
 use rustyline::completion::{Completer, FilenameCompleter};
+use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
-use ctrlc;
-use anyhow::Result;
+use rustyline::{Editor, Helper};
+use std::env;
+use std::io::{self};
+use std::path::Path;
+use std::process::Command;
 
 const BUILTIN_COMMANDS: &[&str] = &["cd", "pwd", "history", "help", "exit", ".vrepl", ".dbinfo"];
 
@@ -28,10 +28,15 @@ pub enum ShellAction {
 impl Completer for ShellHelper {
     type Candidate = String;
 
-    fn complete(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> rustyline::Result<(usize, Vec<String>)> {
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<String>)> {
         let line = &line[..pos];
         let words: Vec<&str> = line.split_whitespace().collect();
-        
+
         if words.is_empty() {
             // Complete with built-in commands
             return Ok((0, BUILTIN_COMMANDS.iter().map(|&s| s.to_string()).collect()));
@@ -45,7 +50,7 @@ impl Completer for ShellHelper {
                 .filter(|&&cmd| cmd.starts_with(prefix))
                 .map(|&s| s.to_string())
                 .collect();
-            
+
             if !candidates.is_empty() {
                 return Ok((0, candidates));
             }
@@ -83,12 +88,12 @@ impl Shell {
         let helper = ShellHelper {
             filename_completer: FilenameCompleter::new(),
         };
-        
+
         let mut editor = Editor::new().unwrap();
         editor.set_helper(Some(helper));
-        
+
         let original_dir = env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
-        
+
         // Set up history path in home directory
         let history_path = match env::var("HOME") {
             Ok(home) => Path::new(&home).join(".vapor_shell_history"),
@@ -120,7 +125,9 @@ impl Shell {
 
     fn get_prompt(&self) -> String {
         let cwd = env::current_dir().unwrap_or_default();
-        let home = env::var("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+        let home = env::var("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
 
         let display_path = if cwd == home {
             "~".to_string()
@@ -136,7 +143,7 @@ impl Shell {
     pub fn run(&mut self) -> ShellAction {
         println!("Welcome to Vapor Shell! Type 'exit' to return to the REPL.");
         println!("Type 'help' for available commands.");
-        
+
         loop {
             let prompt = self.get_prompt();
             let readline = self.editor.readline(&prompt);
@@ -214,7 +221,7 @@ impl Shell {
             }
         }
 
-        // All paths that exit this loop (exit command, .vrepl command, EOF) 
+        // All paths that exit this loop (exit command, .vrepl command, EOF)
         // now explicitly return a ShellAction. Therefore, the loop itself will not terminate
         // in a way that would cause execution to reach code after the loop.
         // The function is guaranteed to return a ShellAction via one of those paths.
@@ -233,7 +240,9 @@ impl Shell {
                     if p == "~" {
                         env::var("HOME").unwrap_or_else(|_| ".".to_string())
                     } else if p.starts_with("~/") {
-                        env::var("HOME").map(|home| format!("{}/{}", home, &p[2..])).unwrap_or_else(|_| p.to_string())
+                        env::var("HOME")
+                            .map(|home| format!("{}/{}", home, &p[2..]))
+                            .unwrap_or_else(|_| p.to_string())
                     } else {
                         p.to_string()
                     }
@@ -257,9 +266,7 @@ impl Shell {
             }
             "help" => self.show_help(),
             _ => {
-                let status = Command::new(parts[0])
-                    .args(&parts[1..])
-                    .status();
+                let status = Command::new(parts[0]).args(&parts[1..]).status();
 
                 match status {
                     Ok(status) => {
@@ -307,9 +314,9 @@ impl Shell {
 /// Start shell mode with database context
 pub fn shell_mode(db_path: &str) -> Result<ShellAction> {
     println!("Starting shell mode for database: {}", db_path);
-    
+
     let mut shell = Shell::new(db_path);
     let action = shell.run();
-    
+
     Ok(action)
 }
