@@ -90,7 +90,14 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                     let result = if command_trimmed.starts_with('.') {
                         handle_special_commands(command_trimmed, &mut conn, &db_path, &bookmarks, &last_select_query, &transaction_manager, &mut query_options)
                     } else {
-                        handle_single_line_command(command_trimmed, &mut conn, &transaction_manager, &mut query_options)
+                        match transaction_manager.handle_sql_command(&conn, command_trimmed) {
+                        Ok(true) => Ok(()), // Command was handled, do nothing more.
+                        Ok(false) => {
+                            // Not a transaction command, execute normally.
+                            handle_single_line_command(command_trimmed, &mut conn, &transaction_manager, &mut query_options)
+                        },
+                        Err(e) => Err(e), // Propagate error.
+                    }
                     };
 
                     if let Err(e) = result {

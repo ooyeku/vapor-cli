@@ -180,6 +180,11 @@ impl Shell {
                         return ShellAction::SwitchToRepl;
                     }
 
+                    if line == ".dbinfo" {
+                        println!("Connected to database: {}", self.db_path);
+                        continue;
+                    }
+
                     if line == "help" {
                         self.show_help();
                         continue;
