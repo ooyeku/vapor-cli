@@ -1,8 +1,36 @@
+//! # Data Import and Export
+//!
+//! This module provides functionality for importing data into and exporting data from the
+//! SQLite database. It currently focuses on the CSV format, which is a common and
+//! versatile format for data interchange.
+//!
+//! ## Key Functions:
+//! - `import_csv_to_table`: Imports data from a CSV file into a specified database table.
+//! - `export_to_csv`: Exports the results of a SQL query to a CSV file.
+//!
+//! The module includes robust error handling, input validation, and progress indicators
+//! for long-running operations to ensure a reliable user experience.
+
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::path::Path;
 
-/// Export query results to CSV with comprehensive error handling and validation
+/// Imports data from a CSV file into a specified database table.
+///
+/// This function reads a CSV file, using the header row to map columns to the
+/// corresponding columns in the target table. The entire import process is wrapped
+/// in a single database transaction to ensure atomicity.
+///
+/// # Arguments
+///
+/// * `conn` - A mutable reference to the active `rusqlite::Connection`.
+/// * `file_path` - The path to the CSV file to be imported.
+/// * `table_name` - The name of the database table to insert data into.
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` on successful import, or an `Err` if the file cannot
+/// be read, the CSV is malformed, or the database insertion fails.
 pub fn import_csv_to_table(conn: &mut Connection, file_path: &str, table_name: &str) -> Result<()> {
     let file = Path::new(file_path);
     if !file.exists() {
@@ -39,6 +67,22 @@ pub fn import_csv_to_table(conn: &mut Connection, file_path: &str, table_name: &
     Ok(())
 }
 
+/// Exports the results of a SQL query to a CSV file.
+///
+/// This function executes a given `SELECT` query and writes the entire result set to a
+/// specified CSV file. It includes comprehensive validation of inputs, progress updates
+/// for large exports, and robust error handling during file writing.
+///
+/// # Arguments
+///
+/// * `conn` - A reference to the active `rusqlite::Connection`.
+/// * `query` - The `SELECT` SQL query whose results will be exported.
+/// * `filename` - The path to the output CSV file. The file will be overwritten if it exists.
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` on successful export, or an `Err` if the query is invalid,
+/// the file cannot be written, or other errors occur during the process.
 pub fn export_to_csv(conn: &Connection, query: &str, filename: &str) -> Result<()> {
     // Validate inputs
     validate_export_inputs(query, filename)?;
@@ -131,6 +175,14 @@ pub fn export_to_csv(conn: &Connection, query: &str, filename: &str) -> Result<(
     Ok(())
 }
 
+/// Helper function to validate the inputs for the `export_to_csv` function.
+///
+/// Performs checks for:
+/// - Non-empty query and filename.
+/// - Presence of a `SELECT` statement in the query.
+/// - Warnings for potentially destructive keywords (e.g., `DROP`, `DELETE`).
+/// - Invalid characters in the filename.
+/// - Existence of the output directory.
 fn validate_export_inputs(query: &str, filename: &str) -> Result<()> {
     // Validate query
     if query.trim().is_empty() {
@@ -196,6 +248,10 @@ fn validate_export_inputs(query: &str, filename: &str) -> Result<()> {
     Ok(())
 }
 
+/// Helper function to process a single database row into a vector of strings for CSV writing.
+///
+/// Handles the conversion of different SQLite data types (`Null`, `Integer`, `Real`, `Text`, `Blob`)
+/// into their string representations. It also escapes text fields as needed for the CSV format.
 fn process_row(row: &rusqlite::Row, column_names: &[String]) -> Result<Vec<String>> {
     let mut record = Vec::with_capacity(column_names.len());
 
@@ -244,6 +300,9 @@ fn process_row(row: &rusqlite::Row, column_names: &[String]) -> Result<Vec<Strin
     Ok(record)
 }
 
+/// Helper function to verify that the export file was created and appears valid.
+///
+/// Checks if the file exists and if its size is non-zero when rows were expected to be written.
 fn verify_export_file(filename: &str, expected_rows: usize) -> Result<()> {
     let path = Path::new(filename);
 

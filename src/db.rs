@@ -1,3 +1,10 @@
+//! # Database Management
+//! 
+//! This module provides all the core functionalities for interacting with the SQLite database.
+//! It handles database initialization, connection, table creation, and listing tables.
+//! The functions in this module are designed to be robust, with features like retry logic
+//! for connections and integrity checks to ensure database validity.
+
 use anyhow::{Context, Result};
 use prettytable::{row, Table};
 use rusqlite::{params, Connection};
@@ -5,7 +12,22 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-/// Initialize a new SQLite database with comprehensive validation and retry logic for handling temporary issues.
+/// Initializes a new SQLite database file.
+///
+/// This function creates a new database file at the specified path. It includes logic to:
+/// - Append `.db` if not present.
+/// - Check if the database already exists to prevent overwriting.
+/// - Create parent directories if they don't exist.
+/// - Use a retry mechanism for creating the connection.
+/// - Verify the integrity of the newly created database.
+///
+/// # Arguments
+///
+/// * `name` - The name of the database file to create.
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` on successful creation, or an `Err` with context if it fails.
 pub fn init_database(name: &str) -> Result<()> {
     let db_path = if name.ends_with(".db") {
         name.to_string()
@@ -46,7 +68,21 @@ pub fn init_database(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Connect to an existing SQLite database with comprehensive validation
+/// Connects to an existing SQLite database.
+///
+/// This function establishes a connection to a given database file. It performs several checks:
+/// - Ensures the database file exists.
+/// - Verifies that the path points to a file, not a directory.
+/// - Uses a retry mechanism for the connection.
+/// - Performs an integrity check on the database upon successful connection.
+///
+/// # Arguments
+///
+/// * `path` - The file path to the SQLite database.
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` on successful connection, or an `Err` with context if it fails.
 pub fn connect_database(path: &str) -> Result<()> {
     // Check if the database exists
     if !Path::new(path).exists() {
@@ -77,7 +113,24 @@ pub fn connect_database(path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Create a new table in the connected database with enhanced validation
+/// Creates a new table in the specified database.
+///
+/// This function adds a new table to the database with the given name and column definitions.
+/// It includes validation to:
+/// - Ensure the database file exists.
+/// - Check if a table with the same name already exists.
+/// - Perform basic validation on the column definition syntax.
+/// - Verify that the table was actually created after execution.
+///
+/// # Arguments
+///
+/// * `db_path` - The path to the database file.
+/// * `table_name` - The name of the table to create.
+/// * `columns` - A string defining the table's columns (e.g., "id INTEGER PRIMARY KEY, name TEXT").
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` on successful table creation, or an `Err` with context if it fails.
 pub fn create_table(db_path: &str, table_name: &str, columns: &str) -> Result<()> {
     // Validate database exists and is accessible
     if !Path::new(db_path).exists() {
@@ -133,7 +186,18 @@ pub fn create_table(db_path: &str, table_name: &str, columns: &str) -> Result<()
     Ok(())
 }
 
-/// List all tables in the connected database with enhanced error handling
+/// Lists all user-created tables in the specified database.
+///
+/// This function queries the `sqlite_master` table to find all tables, excluding the internal
+/// `sqlite_` tables. It then prints the list of tables in a formatted table to the console.
+///
+/// # Arguments
+///
+/// * `db_path` - The path to the database file.
+///
+/// # Returns
+///
+/// A `Result` containing a `Vec<String>` of table names on success, or an `Err` with context if it fails.
 pub fn list_tables(db_path: &str) -> Result<Vec<String>> {
     // Validate database exists and is accessible
     if !Path::new(db_path).exists() {

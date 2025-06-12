@@ -1,4 +1,31 @@
+//! # Vapor-CLI
+//! 
+//! Vapor-CLI is a command-line interface for managing SQLite databases. It provides a set of commands to initialize databases, create tables, and interact with the data through a REPL or shell mode.
+//! 
+//! ## Features
+//! 
+//! - **Database Initialization**: Create a new SQLite database with the `init` command.
+//! - **Table Management**: Define and create tables with the `create-table` command.
+//! - **Interactive REPL**: An interactive Read-Eval-Print Loop (REPL) for executing SQL queries directly.
+//! - **Shell Mode**: A shell mode with database context for more advanced operations.
+//! - **Data Population**: A `populate` command to insert large amounts of data for testing purposes.
+//! 
+//! ## Modules
+//! 
+//! The crate is organized into several modules, each responsible for a specific part of the functionality:
+//! 
+//! - `db`: Core database operations like connecting, creating tables, and listing tables.
+//! - `repl`: Implements the interactive REPL mode.
+//! - `shell`: Implements the shell mode.
+//! - `populate`: Provides functionality for populating the database with test data.
+//! - `bookmarks`: Manages SQL query bookmarks.
+//! - `config`: Handles application configuration.
+//! - `display`: Manages the display of query results.
+//! - `export`: Handles data exporting.
+//! - `transactions`: Manages database transactions.
+
 pub mod bookmarks;
+pub mod config;
 pub mod db;
 pub mod display;
 pub mod export;
@@ -8,7 +35,8 @@ pub mod shell;
 pub mod transactions;
 
 // Main entry points
-pub use repl::repl_mode;
+pub use crate::repl::repl_mode;
+use crate::shell::shell_mode;
 
 // Database management
 pub use db::{connect_database, create_table, init_database, list_tables};
@@ -122,9 +150,7 @@ impl VaporDB {
 
     /// Start the interactive shell
     pub fn start_shell(&self) -> Result<()> {
-        let mut shell = Shell::new(&self.db_path);
-        shell.run();
-        Ok(())
+        shell_mode(&self.db_path).map(|_| ())
     }
 
     /// Populate database with test data

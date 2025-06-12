@@ -1,3 +1,17 @@
+//! # Database Population with Synthetic Data
+//!
+//! This module provides a powerful and configurable system for populating a database with
+//! large amounts of synthetic data. It is designed for performance testing, schema validation,
+//! and generating realistic-looking datasets for development purposes.
+//!
+//! ## Core Features:
+//! - **Configurable Data Generation**: Define table structure, row count, and data types via a `PopulationConfig` struct.
+//! - **Rich Data Types**: Supports common types like `Integer`, `Text`, `Real`, `Boolean`, `Date`, `Timestamp`, and `UUID`.
+//! - **Varied Data Distributions**: Generate data that is sequential, random, uniform, or follows a normal distribution.
+//! - **High Performance**: Uses bulk `INSERT` statements, transactions, and optimized SQLite PRAGMA settings for speed.
+//! - **Robust Error Handling**: Includes pre-flight checks, progress tracking, and cleanup procedures for failed runs.
+//! - **Reproducibility**: Population can be made deterministic by providing a seed value.
+
 use anyhow::{Context, Result};
 use chrono::{Duration as ChronoDuration, Utc};
 use rand::rngs::StdRng;
@@ -8,6 +22,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+/// Defines the complete configuration for a database population task.
+///
+/// This struct specifies the target table, the number of rows to generate, performance settings,
+/// and a detailed schema for each column.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PopulationConfig {
     pub table_name: String,
@@ -17,6 +35,7 @@ pub struct PopulationConfig {
     pub columns: Vec<ColumnConfig>,
 }
 
+/// Configuration for a single column within a table to be populated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnConfig {
     pub name: String,
@@ -25,6 +44,7 @@ pub struct ColumnConfig {
     pub nullable: bool,
 }
 
+/// Enumerates the supported data types for synthetic data generation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DataType {
     Integer,
@@ -36,6 +56,7 @@ pub enum DataType {
     UUID,
 }
 
+/// Defines the statistical distribution or pattern for generating data in a column.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DataDistribution {
     Uniform,
@@ -79,7 +100,27 @@ impl Default for PopulationConfig {
     }
 }
 
-/// Populate database with test data, featuring comprehensive error handling and progress tracking
+/// Populates a database with a large volume of synthetic data based on a provided configuration.
+///
+/// This is the main entry point for the population functionality. It orchestrates the entire
+/// process, including:
+/// 1. Validating the database file.
+/// 2. Optimizing the database connection for bulk writes.
+/// 3. Estimating disk space requirements.
+/// 4. Creating the target table if it doesn't exist.
+/// 5. Inserting data in batches within a single transaction.
+/// 6. Providing progress updates and performance metrics.
+/// 7. Verifying the final row count.
+///
+/// # Arguments
+///
+/// * `db_path` - The file path to the SQLite database.
+/// * `config` - An `Option<PopulationConfig>` that defines the population parameters.
+///              If `None`, a default configuration is used.
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` on success, or an `Err` if any part of the process fails.
 pub fn populate_database(db_path: &str, config: Option<PopulationConfig>) -> Result<()> {
     println!("Connecting to database: {}", db_path);
 

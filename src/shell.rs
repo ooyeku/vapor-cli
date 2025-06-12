@@ -1,4 +1,20 @@
-use anyhow::Result;
+//! # Interactive Shell Mode
+//!
+//! This module implements an interactive shell for `vapor-cli`, providing a different
+//! mode of operation from the SQL REPL. The shell allows users to run standard system
+//! commands and a few built-in commands, all while maintaining the context of the
+//! connected database.
+//!
+//! ## Features:
+//! - **System Command Execution**: Run any command available in the system's `PATH`.
+//! - **Built-in Commands**: Includes `cd`, `pwd`, `history`, and `help`.
+//! - **Database Context**: The shell is aware of the connected database, which can be referenced via `.dbinfo`.
+//! - **REPL Integration**: Seamlessly switch back to the SQL REPL using the `.vrepl` command.
+//! - **Command Completion**: Provides basic completion for built-in commands and file paths.
+//! - **Persistent History**: Saves shell command history across sessions.
+
+use crate::config;
+use anyhow::{Context, Result};
 use ctrlc;
 use rustyline::completion::{Completer, FilenameCompleter};
 use rustyline::error::ReadlineError;
@@ -11,6 +27,15 @@ use std::io::{self};
 use std::path::Path;
 use std::process::Command;
 
+/// Defines the possible actions that can be returned from the shell session.
+/// This is used to signal whether the user wants to exit the application entirely
+/// or switch back to the SQL REPL.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ShellAction {
+    Exit,
+    SwitchToRepl,
+}
+
 const BUILTIN_COMMANDS: &[&str] = &["cd", "pwd", "history", "help", "exit", ".vrepl", ".dbinfo"];
 
 struct ShellHelper {
@@ -18,12 +43,6 @@ struct ShellHelper {
 }
 
 impl Helper for ShellHelper {}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum ShellAction {
-    Exit,
-    SwitchToRepl,
-}
 
 impl Completer for ShellHelper {
     type Candidate = String;
@@ -75,8 +94,12 @@ impl Hinter for ShellHelper {
 
 impl Validator for ShellHelper {}
 
+/// Represents the state of the interactive shell.
+///
+/// This struct holds the `rustyline` editor instance, the original directory from which
+/// the shell was started, the path to the history file, and the path to the connected
+/// database.
 pub struct Shell {
-    history: Vec<String>,
     editor: Editor<ShellHelper, rustyline::history::FileHistory>,
     original_dir: std::path::PathBuf,
     history_path: std::path::PathBuf,
@@ -84,7 +107,19 @@ pub struct Shell {
 }
 
 impl Shell {
-    pub fn new(db_path: &str) -> Self {
+        /// Creates a new `Shell` instance.
+    ///
+    /// This function initializes the `rustyline` editor, sets up the command completer,
+    /// loads the command history, and establishes a Ctrl+C handler.
+    ///
+    /// # Arguments
+    ///
+    /// * `db_path` - The path to the database file, which is kept for context.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the new `Shell` instance, or an `Err` if initialization fails.
+    pub fn new(db_path: &str) -> Result<Self> {
         let helper = ShellHelper {
             filename_completer: FilenameCompleter::new(),
         };
@@ -95,10 +130,7 @@ impl Shell {
         let original_dir = env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
 
         // Set up history path in home directory
-        let history_path = match env::var("HOME") {
-            Ok(home) => Path::new(&home).join(".vapor_shell_history"),
-            Err(_) => Path::new(".vapor_shell_history").to_path_buf(),
-        };
+        let history_path = config::get_shell_history_path()?;
 
         // Load history if available
         if history_path.exists() {
@@ -114,13 +146,12 @@ impl Shell {
             eprintln!("Warning: Could not set up Ctrl+C handler: {}", e);
         }
 
-        Shell {
-            history: Vec::new(),
+        Ok(Shell {
             editor,
             original_dir,
             history_path,
             db_path: db_path.to_string(),
-        }
+        })
     }
 
     fn get_prompt(&self) -> String {
@@ -140,6 +171,16 @@ impl Shell {
         format!("[vapor-shell {}]$ ", display_path)
     }
 
+        /// Runs the main loop of the shell.
+    ///
+    /// This function displays the prompt, reads user input, and executes the entered
+    /// commands. It handles both built-in commands and external system commands.
+    /// The loop continues until the user enters `exit` or `.vrepl`.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellAction` indicating the user's intent to either exit the application
+    /// or switch back to the REPL.
     pub fn run(&mut self) -> ShellAction {
         println!("Welcome to Vapor Shell! Type 'exit' to return to the REPL.");
         println!("Type 'help' for available commands.");
@@ -154,36 +195,15 @@ impl Shell {
                         continue;
                     }
 
-                    // Add to history
-                    self.history.push(line.to_string());
                     if let Err(e) = self.editor.add_history_entry(line) {
                         eprintln!("Warning: Could not add to history: {}", e);
                     }
 
-                    // Handle exit command first
                     if line == "exit" {
-                        println!("Returning to REPL...");
-                        // Save history before exiting
-                        if let Err(e) = self.editor.save_history(&self.history_path) {
-                            eprintln!("Warning: Could not save shell history: {}", e);
-                        }
-                        // Restore original directory
-                        if let Err(e) = env::set_current_dir(&self.original_dir) {
-                            eprintln!("Warning: Could not restore original directory: {}", e);
-                        }
                         return ShellAction::Exit;
                     }
 
                     if line == ".vrepl" {
-                        println!("Switching to SQL REPL...");
-                        // Save history before switching
-                        if let Err(e) = self.editor.save_history(&self.history_path) {
-                            eprintln!("Warning: Could not save shell history: {}", e);
-                        }
-                        // Restore original directory
-                        if let Err(e) = env::set_current_dir(&self.original_dir) {
-                            eprintln!("Warning: Could not restore original directory: {}", e);
-                        }
                         return ShellAction::SwitchToRepl;
                     }
 
@@ -204,14 +224,6 @@ impl Shell {
                     continue;
                 }
                 Err(ReadlineError::Eof) => {
-                    println!("EOF");
-                    // Save history and restore dir before breaking
-                    if let Err(e) = self.editor.save_history(&self.history_path) {
-                        eprintln!("Warning: Could not save shell history: {}", e);
-                    }
-                    if let Err(e) = env::set_current_dir(&self.original_dir) {
-                        eprintln!("Warning: Could not restore original directory: {}", e);
-                    }
                     return ShellAction::Exit; // Treat EOF as a normal exit
                 }
                 Err(err) => {
@@ -220,11 +232,6 @@ impl Shell {
                 }
             }
         }
-
-        // All paths that exit this loop (exit command, .vrepl command, EOF)
-        // now explicitly return a ShellAction. Therefore, the loop itself will not terminate
-        // in a way that would cause execution to reach code after the loop.
-        // The function is guaranteed to return a ShellAction via one of those paths.
     }
 
     fn execute_command(&mut self, command: &str) {
@@ -260,11 +267,10 @@ impl Shell {
                 }
             }
             "history" => {
-                for (i, cmd) in self.history.iter().enumerate() {
-                    println!("{}: {}", i + 1, cmd);
+                for (i, entry) in self.editor.history().iter().enumerate() {
+                    println!("{}: {}", i + 1, entry);
                 }
             }
-            "help" => self.show_help(),
             _ => {
                 let status = Command::new(parts[0]).args(&parts[1..]).status();
 
@@ -291,32 +297,51 @@ impl Shell {
 
     fn show_help(&self) {
         println!("Vapor Shell - Available Commands:");
-        println!("\nBuilt-in Commands:");
-        println!("  cd [dir]     Change directory (defaults to home if no dir specified)");
-        println!("  pwd          Print working directory");
-        println!("  history      Show command history");
-        println!("  help         Show this help message");
-        println!("  .vrepl       Exit shell and switch to SQL REPL for the current database");
-        println!("  exit         Exit shell and return to the main CLI prompt (or OS shell if launched directly)");
-        println!("\nSystem Commands:");
-        println!("  All standard Unix/Linux commands are available");
-        println!("  Command completion is available (press TAB)");
-        println!("  File/directory completion is available (press TAB)");
-        println!("\nFeatures:");
-        println!("  • Command history with arrow keys");
-        println!("  • Tab completion for commands and files");
-        println!("  • Command history persistence");
-        println!("  • Error handling and reporting");
+        println!("  .vrepl         - Switch back to the SQL REPL");
+        println!("  .dbinfo        - Show information about the connected database");
+        println!("  cd <dir>       - Change directory");
+        println!("  ls [dir]       - List directory contents");
+        println!("  pwd            - Print working directory");
+        println!("  history        - Show command history");
+        println!("  help           - Show this help message");
+        println!("  exit           - Exit the shell and return to the REPL");
+    }
+
+    fn save_history(&mut self) -> Result<()> {
+        self.editor
+            .save_history(&self.history_path)
+            .context("Failed to save shell history")
     }
 }
 
-/// Start shell mode with database context
-/// Start shell mode with database context
+/// Starts the interactive shell mode.
+///
+/// This function initializes and runs the `Shell`. It ensures that the command history
+/// is saved and the original working directory is restored after the shell session ends.
+///
+/// # Arguments
+///
+/// * `db_path` - The path to the database file, which provides context to the shell.
+///
+/// # Returns
+///
+/// A `Result` containing the `ShellAction` that indicates the next step for the calling code
+/// (e.g., exit or switch to REPL).
 pub fn shell_mode(db_path: &str) -> Result<ShellAction> {
     println!("Starting shell mode for database: {}", db_path);
 
-    let mut shell = Shell::new(db_path);
+    let mut shell = Shell::new(db_path)?;
     let action = shell.run();
+
+    // Save history before exiting
+    if let Err(e) = shell.save_history() {
+        eprintln!("Warning: Could not save shell history: {}", e);
+    }
+
+    // Restore original directory
+    if let Err(e) = env::set_current_dir(&shell.original_dir) {
+        eprintln!("Warning: Could not restore original directory: {}", e);
+    }
 
     Ok(action)
 }

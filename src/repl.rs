@@ -1,4 +1,19 @@
-use crate::shell::Shell;
+//! # Interactive REPL Mode
+//!
+//! This module implements the interactive Read-Eval-Print Loop (REPL) for `vapor-cli`.
+//! It provides a command-line interface for users to execute SQL queries and special
+//! commands directly against a SQLite database.
+//!
+//! ## Features:
+//! - **SQL Execution**: Run any valid SQL query.
+//! - **Special Commands**: Dot-prefixed commands for database inspection, output formatting, etc. (e.g., `.tables`, `.schema`).
+//! - **Multi-line Input**: Supports SQL queries that span multiple lines, ending with a semicolon.
+//! - **Command History**: Persists command history between sessions.
+//! - **Transaction Management**: Supports `BEGIN`, `COMMIT`, and `ROLLBACK` with status indicators.
+//! - **Query Bookmarking**: Save, list, and run frequently used queries.
+//! - **Non-Interactive Mode**: Can execute SQL from piped input (e.g., `cat query.sql | vapor-cli repl ...`).
+//! - **Robust Error Handling**: Provides informative error messages and offers to reconnect on critical failures.
+
 use anyhow::{Context, Result};
 use atty::Stream;
 use rusqlite::Connection;
@@ -8,6 +23,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::bookmarks::BookmarkManager;
+use crate::config;
 use crate::db::list_tables;
 use crate::display::{
     execute_sql, show_all_schemas, show_database_info, show_table_schema, OutputFormat,
@@ -16,7 +32,21 @@ use crate::display::{
 use crate::export::{export_to_csv, import_csv_to_table};
 use crate::transactions::TransactionManager;
 
-/// Start an interactive SQL REPL (Read-Eval-Print Loop) with enhanced error handling
+/// Starts the interactive SQL REPL session.
+///
+/// This is the main entry point for the REPL mode. It sets up the connection to the
+/// specified database, initializes the `rustyline` editor for user input, and enters
+/// a loop to read and process commands. It handles both interactive and non-interactive
+/// (piped) input.
+///
+/// # Arguments
+///
+/// * `db_path` - The file path to the SQLite database.
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` when the REPL exits gracefully, or an `Err` with
+/// context if a critical error occurs that cannot be handled.
 pub fn repl_mode(db_path: &str) -> Result<()> {
     // Convert to absolute path
     let db_path = std::fs::canonicalize(db_path)
@@ -60,11 +90,9 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
     };
 
     // Load command history if available
-    let history_path = Path::new(".vapor_history");
-    if history_path.exists() {
-        if let Err(e) = rl.load_history(history_path) {
-            eprintln!("Warning: Could not load command history: {}", e);
-        }
+    let history_path = config::get_repl_history_path()?;
+    if rl.load_history(&history_path).is_err() {
+        // No history file yet is fine
     }
 
     let mut multi_line_input = String::new();
@@ -144,7 +172,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
     }
 
     // Cleanup on exit
-    cleanup_repl_session(&conn, &transaction_manager, &mut rl, history_path)?;
+    cleanup_repl_session(&conn, &transaction_manager, &mut rl, &history_path)?;
     println!("Goodbye!");
     Ok(())
 }
@@ -356,8 +384,10 @@ fn handle_special_commands(
     match base_command {
         ".help" => show_help(),
         ".shell" => {
-            let mut shell = Shell::new(db_path);
-            shell.run();
+            println!("Switching to shell mode...");
+            crate::shell::shell_mode(db_path)?;
+            println!("\nReturning to REPL mode.");
+            print_help_summary();
         }
         ".exit" | ".quit" => std::process::exit(0),
         ".tables" => {
@@ -561,7 +591,11 @@ fn handle_bookmark_command(
     Ok(())
 }
 
-/// Display help information for the REPL
+/// Displays detailed help information for all REPL commands.
+///
+/// This function prints a comprehensive list of available special commands (`.commands`),
+/// SQL operations, and other features of the REPL to the console, helping users
+/// understand how to interact with the tool.
 pub fn show_help() {
     println!("Enhanced REPL Commands:");
     println!();

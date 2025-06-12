@@ -1,3 +1,19 @@
+//! # Query Result Display and Formatting
+//!
+//! This module is responsible for executing SQL queries and presenting the results in various
+//! formats. It handles the formatting of data into tables, JSON, and CSV, and also provides
+//! utility functions for displaying database metadata like table schemas and statistics.
+//!
+//! ## Core Components:
+//! - `execute_sql`: The main function that runs a SQL query and manages the display of its results.
+//! - `OutputFormat`: An enum to specify the desired output format (`Table`, `Json`, `Csv`).
+//! - `QueryOptions`: A struct to control display settings like row limits and timing information.
+//! - Schema Display: Functions like `show_table_schema` and `show_all_schemas` for inspecting the DB structure.
+//! - Database Info: `show_database_info` provides a summary of the database file and its contents.
+//!
+//! The module also includes experimental, currently unused features for result caching (`QueryCache`)
+//! and progressive data loading (`ProgressiveLoader`).
+
 use anyhow::{Context, Result};
 use prettytable::{row, Table};
 use rusqlite::{params, Connection};
@@ -7,6 +23,7 @@ use std::error::Error;
 use std::fmt;
 use std::time::{Duration, Instant};
 
+/// Specifies the output format for query results.
 #[derive(Debug, Clone)]
 pub enum OutputFormat {
     Table,
@@ -14,6 +31,10 @@ pub enum OutputFormat {
     Csv,
 }
 
+#[allow(dead_code)]
+/// Custom error types for display-related operations.
+///
+/// Note: This is currently not used extensively but is defined for future error handling enhancements.
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum DisplayError {
@@ -32,6 +53,7 @@ impl fmt::Display for DisplayError {
 
 impl Error for DisplayError {}
 
+/// Defines options for controlling how a query is executed and displayed.
 pub struct QueryOptions {
     pub format: OutputFormat,
     pub max_rows: Option<usize>,
@@ -48,6 +70,10 @@ impl Default for QueryOptions {
     }
 }
 
+#[allow(dead_code)]
+/// A cache for storing and retrieving query results to improve performance for repeated queries.
+///
+/// Note: This feature is experimental and not currently integrated into the REPL or CLI.
 #[allow(dead_code)]
 pub struct QueryCache {
     results: HashMap<String, (Vec<Vec<String>>, Instant)>,
@@ -97,6 +123,10 @@ impl QueryCache {
 }
 
 #[allow(dead_code)]
+/// A helper for loading and displaying large result sets in batches to avoid high memory usage.
+///
+/// Note: This feature is experimental and not currently integrated into the REPL or CLI.
+#[allow(dead_code)]
 pub struct ProgressiveLoader {
     batch_size: usize,
     total_rows: usize,
@@ -143,7 +173,20 @@ impl ProgressiveLoader {
     }
 }
 
-/// Execute a SQL command and display the results with enhanced formatting and timing
+/// Executes a SQL statement and displays the results according to the provided options.
+///
+/// This function handles both `SELECT` queries, which produce result sets, and other
+/// statements (e.g., `INSERT`, `UPDATE`, `CREATE`), which report the number of affected rows.
+///
+/// # Arguments
+///
+/// * `conn` - A reference to the active `rusqlite::Connection`.
+/// * `sql` - The SQL string to execute.
+/// * `options` - A `QueryOptions` struct specifying the format, row limit, and other settings.
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` on success, or an `Err` if the query fails to prepare or execute.
 pub fn execute_sql(conn: &Connection, sql: &str, options: &QueryOptions) -> Result<()> {
     let start_time = Instant::now();
 
@@ -233,6 +276,7 @@ pub fn execute_sql(conn: &Connection, sql: &str, options: &QueryOptions) -> Resu
     Ok(())
 }
 
+/// Formats and prints query results as a bordered table to the console.
 fn display_as_table(column_names: &[String], rows: &[Vec<String>]) {
     let mut table = Table::new();
     table.set_format(*prettytable::format::consts::FORMAT_BOX_CHARS);
@@ -256,6 +300,10 @@ fn display_as_table(column_names: &[String], rows: &[Vec<String>]) {
     table.printstd();
 }
 
+/// Formats and prints query results as a JSON object to the console.
+///
+/// The JSON output includes the column names, the number of rows, and the data itself.
+/// It attempts to infer numeric types from the string values.
 fn display_as_json(column_names: &[String], rows: &[Vec<String>]) -> Result<()> {
     let mut json_rows = Vec::new();
 
@@ -289,6 +337,9 @@ fn display_as_json(column_names: &[String], rows: &[Vec<String>]) -> Result<()> 
     Ok(())
 }
 
+/// Formats and prints query results as CSV data to the console.
+///
+/// This function handles basic CSV escaping for values containing commas or quotes.
 fn display_as_csv(column_names: &[String], rows: &[Vec<String>]) {
     // Print header
     println!("{}", column_names.join(","));
@@ -309,7 +360,18 @@ fn display_as_csv(column_names: &[String], rows: &[Vec<String>]) {
     }
 }
 
-/// Show the schema for a specific table
+/// Displays the schema for a specific table, including column names, types, and constraints.
+///
+/// It uses `PRAGMA table_info` to retrieve the schema information from SQLite.
+///
+/// # Arguments
+///
+/// * `conn` - A reference to the active `rusqlite::Connection`.
+/// * `table_name` - The name of the table to inspect.
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` on success, or an `Err` on failure.
 pub fn show_table_schema(conn: &Connection, table_name: &str) -> Result<()> {
     // Check if the table exists
     let mut check_stmt = conn
@@ -388,7 +450,17 @@ pub fn show_table_schema(conn: &Connection, table_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Show the schema for all tables
+/// Iterates through all user-defined tables in the database and displays the schema for each one.
+///
+/// It queries the `sqlite_master` table to find all tables and then calls `show_table_schema` for each.
+///
+/// # Arguments
+///
+/// * `conn` - A reference to the active `rusqlite::Connection`.
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` on success, or an `Err` on failure.
 pub fn show_all_schemas(conn: &Connection) -> Result<()> {
     // Get all table names
     let mut stmt = conn
@@ -416,7 +488,18 @@ pub fn show_all_schemas(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Show database information and statistics
+/// Displays general information and statistics about the connected database.
+///
+/// This includes the database file path, size, SQLite version, and row counts for each table.
+///
+/// # Arguments
+///
+/// * `conn` - A reference to the active `rusqlite::Connection`.
+/// * `db_path` - The file path of the database, used to calculate its size.
+///
+/// # Returns
+///
+/// A `Result` which is `Ok(())` on success, or an `Err` on failure.
 pub fn show_database_info(conn: &Connection, db_path: &str) -> Result<()> {
     println!("Database Information:");
     println!("  Path: {}", db_path);

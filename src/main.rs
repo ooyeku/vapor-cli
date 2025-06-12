@@ -1,20 +1,24 @@
+//! # Vapor-CLI Main Entry Point
+//! 
+//! This file contains the main entry point for the Vapor-CLI application. It uses the `clap`
+//! crate to parse command-line arguments and execute the corresponding commands. The application
+//! is structured to handle various database operations, including initialization, connection,
+//! table management, and interactive sessions like REPL and shell modes.
+//! 
+//! The `main` function sets up a custom panic hook for more user-friendly error messages
+//! and calls the `run` function, which contains the core application logic. Errors are handled
+//! gracefully, providing context and suggestions to the user.
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::process;
 
-mod bookmarks;
-mod db;
-mod display;
-mod export;
-mod populate;
-mod repl;
-mod shell;
-mod transactions;
-
-use db::{connect_database, create_table, init_database, list_tables};
-use populate::populate_database;
-use repl::repl_mode;
-use shell::{shell_mode, ShellAction};
+use vapor_cli::{
+    db::{connect_database, create_table, init_database, list_tables},
+    populate::populate_database,
+    repl::repl_mode,
+    shell::{shell_mode, ShellAction},
+};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
