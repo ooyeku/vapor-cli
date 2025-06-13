@@ -109,7 +109,16 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
         let readline = rl.readline(prompt);
         match readline {
             Ok(line) => {
-                let line = line.trim();
+                // Add to history before extensive trimming or further processing
+                // to save exactly what the user typed, if not empty.
+                // We use line.as_ref() as add_history_entry expects a &str.
+                if !line.trim().is_empty() { // Check if line is not just whitespace before adding
+                    if let Err(err) = rl.add_history_entry(line.as_str()) {
+                        eprintln!("Warning: Could not add to history: {}", err);
+                    }
+                }
+
+                let line = line.trim(); // Now trim for command processing
                 if line.is_empty() && multi_line_input.is_empty() {
                     continue;
                 }
@@ -120,7 +129,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                 if let Some(command) = command_to_execute {
                     let command_trimmed = command.trim();
                     let result = if command_trimmed.starts_with('.') {
-                        handle_special_commands(
+                        match handle_special_commands(
                             command_trimmed,
                             &mut conn,
                             &db_path,
@@ -128,7 +137,15 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                             &last_select_query,
                             &transaction_manager,
                             &mut query_options,
-                        )
+                        ) {
+                            Ok(should_continue) => {
+                                if !should_continue {
+                                    break; // Exit the REPL loop
+                                }
+                                Ok(())
+                            }
+                            Err(e) => Err(e), // Propagate other errors
+                        }
                     } else {
                         match transaction_manager.handle_sql_command(&conn, command_trimmed) {
                             Ok(true) => Ok(()), // Command was handled, do nothing more.
@@ -376,33 +393,42 @@ fn handle_special_commands(
     last_select_query: &Arc<Mutex<String>>,
     transaction_manager: &TransactionManager,
     query_options: &mut QueryOptions,
-) -> Result<()> {
+) -> Result<bool> {
     let command = command.trim();
     let parts: Vec<&str> = command.split_whitespace().collect();
     let base_command = parts.get(0).cloned().unwrap_or("");
 
     match base_command {
-        ".help" => show_help(),
+        ".help" => {
+            show_help();
+            Ok(true)
+        }
         ".shell" => {
             println!("Switching to shell mode...");
             crate::shell::shell_mode(db_path)?;
             println!("\nReturning to REPL mode.");
             print_help_summary();
+            Ok(true)
         }
-        ".exit" | ".quit" => std::process::exit(0),
+        ".exit" | ".quit" => Ok(false), // Signal to exit REPL
         ".tables" => {
             let tables = list_tables(db_path)?;
             for table in tables {
                 println!("{}", table);
             }
+            Ok(true)
         }
         ".clear" => {
             print!("\x1B[2J\x1B[1;1H");
             std::io::stdout()
                 .flush()
                 .context("Failed to flush stdout")?;
+            Ok(true)
         }
-        ".info" => show_database_info(conn, db_path)?,
+        ".info" => {
+            show_database_info(conn, db_path)?;
+            Ok(true)
+        }
         ".format" => {
             if parts.len() > 1 {
                 match parts[1] {
@@ -415,6 +441,7 @@ fn handle_special_commands(
                 println!("Current format: {:?}", query_options.format);
                 println!("Usage: .format [table|json|csv]");
             }
+            Ok(true)
         }
         ".limit" => {
             if parts.len() > 1 {
@@ -435,14 +462,17 @@ fn handle_special_commands(
                     Some(n) => println!("Current row limit: {}", n),
                 }
             }
+            Ok(true)
         }
         ".timing" => {
             query_options.show_timing = true;
             println!("Query timing enabled");
+            Ok(true)
         }
         ".notiming" => {
             query_options.show_timing = false;
             println!("Query timing disabled");
+            Ok(true)
         }
         ".export" => {
             if parts.len() > 1 {
@@ -456,6 +486,7 @@ fn handle_special_commands(
             } else {
                 println!("Usage: .export FILENAME");
             }
+            Ok(true)
         }
         ".import" => {
             if parts.len() >= 3 {
@@ -463,15 +494,17 @@ fn handle_special_commands(
             } else {
                 println!("Usage: .import CSV_FILENAME TABLE_NAME");
             }
+            Ok(true)
         }
         ".bookmark" => {
-            return handle_bookmark_command(
+            handle_bookmark_command(
                 command,
                 bookmarks,
                 last_select_query,
                 conn,
                 query_options,
-            );
+            )?;
+            Ok(true)
         }
         ".schema" => {
             if parts.len() > 1 {
@@ -479,18 +512,20 @@ fn handle_special_commands(
             } else {
                 show_all_schemas(conn)?;
             }
+            Ok(true)
         }
         ".status" => {
             transaction_manager.show_status();
+            Ok(true)
         }
         _ => {
             println!(
                 "Unknown command: '{}'. Type '.help' for a list of commands.",
                 command
             );
+            Ok(true)
         }
     }
-    Ok(())
 }
 
 fn handle_single_line_command(
