@@ -34,36 +34,18 @@ pub mod populate;
 pub mod repl;
 pub mod shell;
 pub mod transactions;
-
-// Main entry points
 pub use crate::repl::repl_mode;
-use crate::shell::shell_mode;
-
-// Database management
+pub use crate::shell::shell_mode;
 pub use db::{connect_database, create_table, init_database, list_tables};
-
-// SQL execution and display
 pub use display::{
     execute_sql, show_all_schemas, show_database_info, show_table_schema, OutputFormat,
     QueryOptions,
 };
-
-// Data export functionality
 pub use export::export_to_csv;
-
-// Shell functionality
 pub use shell::Shell;
-
-// Bookmark management
 pub use bookmarks::{Bookmark, BookmarkManager};
-
-// Transaction management
 pub use transactions::{TransactionManager, TransactionState};
-
-// Data population and testing
 pub use populate::{populate_database, ColumnConfig, DataDistribution, DataType, PopulationConfig};
-
-// Re-export commonly used types for convenience
 pub use anyhow::Result;
 pub use rusqlite::Connection;
 
