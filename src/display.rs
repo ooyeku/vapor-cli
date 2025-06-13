@@ -187,7 +187,7 @@ impl ProgressiveLoader {
 /// # Returns
 ///
 /// A `Result` which is `Ok(())` on success, or an `Err` if the query fails to prepare or execute.
-pub fn execute_sql(conn: &Connection, sql: &str, options: &QueryOptions) -> Result<()> {
+pub fn execute_sql(conn: &Connection, sql: &str, options: &QueryOptions, last_select_query: &std::sync::Arc<std::sync::Mutex<String>>) -> Result<()> {
     let start_time = Instant::now();
 
     // Execute the query
@@ -197,6 +197,12 @@ pub fn execute_sql(conn: &Connection, sql: &str, options: &QueryOptions) -> Resu
 
     // Check if it's a SELECT query
     let is_select = sql.trim().to_uppercase().starts_with("SELECT");
+
+    if is_select {
+        let mut last_query_guard = last_select_query.lock().unwrap();
+        last_query_guard.clear();
+        last_query_guard.push_str(sql);
+    }
 
     if is_select {
         // Get column names before executing the query
