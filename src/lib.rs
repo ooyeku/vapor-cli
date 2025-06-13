@@ -28,6 +28,7 @@ pub mod bookmarks;
 pub mod config;
 pub mod db;
 pub mod display;
+use std::sync::{Arc, Mutex};
 pub mod export;
 pub mod populate;
 pub mod repl;
@@ -104,12 +105,14 @@ impl VaporDB {
     /// Execute a SQL query and return the result
     pub fn execute(&self, sql: &str) -> Result<()> {
         let options = QueryOptions::default();
-        execute_sql(&self.connection, sql, &options)
+        let dummy_last_query = Arc::new(Mutex::new(String::new()));
+        execute_sql(&self.connection, sql, &options, &dummy_last_query)
     }
 
     /// Execute a SQL query with custom options
     pub fn execute_with_options(&self, sql: &str, options: &QueryOptions) -> Result<()> {
-        execute_sql(&self.connection, sql, options)
+        let dummy_last_query = Arc::new(Mutex::new(String::new()));
+        execute_sql(&self.connection, sql, options, &dummy_last_query)
     }
 
     /// List all tables in the database
@@ -222,18 +225,22 @@ mod tests {
         .unwrap();
 
         // Test inserting data
+        let dummy_last_query = Arc::new(Mutex::new(String::new()));
         execute_sql(
             &conn,
             "INSERT INTO test_table (name) VALUES ('test')",
             &QueryOptions::default(),
+            &dummy_last_query,
         )
         .unwrap();
 
         // Test selecting data with explicit column types
+        let dummy_last_query = Arc::new(Mutex::new(String::new()));
         execute_sql(
             &conn,
             "SELECT id, name FROM test_table",
             &QueryOptions::default(),
+            &dummy_last_query,
         )
         .unwrap();
     }
@@ -430,19 +437,22 @@ mod tests {
             format: OutputFormat::Table,
             ..Default::default()
         };
-        execute_sql(&conn, "SELECT * FROM test_output", &table_options).unwrap();
+        let dummy_last_query = Arc::new(Mutex::new(String::new()));
+        execute_sql(&conn, "SELECT * FROM test_output", &table_options, &dummy_last_query).unwrap();
 
         let csv_options = QueryOptions {
             format: OutputFormat::Csv,
             ..Default::default()
         };
-        execute_sql(&conn, "SELECT * FROM test_output", &csv_options).unwrap();
+        let dummy_last_query = Arc::new(Mutex::new(String::new()));
+        execute_sql(&conn, "SELECT * FROM test_output", &csv_options, &dummy_last_query).unwrap();
 
         let json_options = QueryOptions {
             format: OutputFormat::Json,
             ..Default::default()
         };
-        execute_sql(&conn, "SELECT * FROM test_output", &json_options).unwrap();
+        let dummy_last_query = Arc::new(Mutex::new(String::new()));
+        execute_sql(&conn, "SELECT * FROM test_output", &json_options, &dummy_last_query).unwrap();
     }
 
     #[test]

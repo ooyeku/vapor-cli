@@ -139,6 +139,7 @@ pub fn repl_mode(db_path: &str) -> Result<()> {
                                     &mut conn,
                                     &transaction_manager,
                                     &mut query_options,
+                                    &last_select_query,
                                 )
                             }
                             Err(e) => Err(e), // Propagate error.
@@ -224,36 +225,35 @@ fn create_robust_connection(db_path: &str) -> Result<Connection> {
 fn handle_non_interactive_mode(conn: &Connection) -> Result<()> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
-
-    let options = QueryOptions::default();
-    execute_sql(conn, &input, &options)
+    let options = QueryOptions::default(); // Use default options for non-interactive mode
+    let dummy_last_query = Arc::new(Mutex::new(String::new()));
+    execute_sql(conn, &input, &options, &dummy_last_query)
 }
 
 fn handle_basic_repl_mode(conn: &Connection) -> Result<()> {
-    let mut buffer = String::with_capacity(1024); // Pre-allocate buffer with reasonable capacity
-    let options = QueryOptions::default();
-    let stdout = std::io::stdout();
-    let mut stdout_handle = stdout.lock(); // Lock stdout once instead of multiple times
+    println!("Basic input mode (no history or advanced features).");
+    let mut stdout = std::io::stdout();
+    let options = QueryOptions::default(); // Use default options for basic mode
+    let dummy_last_query = Arc::new(Mutex::new(String::new()));
 
     loop {
-        stdout_handle.write_all(b"vapor> ")?;
-        stdout_handle.flush()?;
-
-        buffer.clear(); // Clear buffer without deallocating
-        if std::io::stdin().read_line(&mut buffer)? == 0 {
+        print!("> ");
+        stdout.flush()?;
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line)? == 0 {
+            println!("EOF");
+            break; // EOF
+        }
+        let line = line.trim();
+        if line == ".exit" || line == "exit" {
             break;
         }
-
-        let line = buffer.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if let Err(e) = execute_sql(conn, line, &options) {
-            writeln!(stdout_handle, "Error: {}", e)?;
+        if !line.is_empty() {
+            if let Err(e) = execute_sql(conn, line, &options, &dummy_last_query) {
+                eprintln!("Error: {}", e);
+            }
         }
     }
-
     Ok(())
 }
 
@@ -498,6 +498,7 @@ fn handle_single_line_command(
     conn: &mut Connection,
     transaction_manager: &TransactionManager,
     query_options: &mut QueryOptions,
+    last_select_query: &Arc<Mutex<String>>,
 ) -> Result<()> {
     let line = line.trim();
     match line.to_lowercase().as_str() {
@@ -506,7 +507,7 @@ fn handle_single_line_command(
         "rollback" | "rollback transaction" => transaction_manager.rollback_transaction(conn),
         _ => {
             // Regular SQL query
-            execute_sql(conn, line, query_options)
+            execute_sql(conn, line, query_options, last_select_query)
         }
     }
 }
@@ -557,7 +558,7 @@ fn handle_bookmark_command(
             let name = parts[2];
             if let Some(bookmark) = bookmarks.get_bookmark(name) {
                 println!("Executing bookmark '{}': {}", name, bookmark.query);
-                execute_sql(conn, &bookmark.query, query_options)?;
+                execute_sql(conn, &bookmark.query, query_options, last_select_query)?;
             } else {
                 println!("Bookmark '{}' not found.", name);
             }

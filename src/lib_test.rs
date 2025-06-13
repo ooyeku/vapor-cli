@@ -31,7 +31,7 @@ mod tests {
         assert!(tables.contains(&"test_table".to_string()));
     }
 
-        /// Tests the `execute_sql` function for basic `INSERT` and `SELECT` operations.
+    /// Tests the `execute_sql` function for basic `INSERT` and `SELECT` operations.
     ///
     /// This test ensures that `execute_sql` can:
     /// 1. Successfully insert data into a table.
